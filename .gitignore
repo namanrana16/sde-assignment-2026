@@ -2,3 +2,6 @@ runs/
 __pycache__/
 *.pyc
 .venv/
+state/
+reports/*.tmp
+.coverage
