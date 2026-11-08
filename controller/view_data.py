@@ -137,7 +137,9 @@ def _arm_stats(store: Store, wid: str, dim: str, st: dict, now: int) -> dict[str
         rec = {"connects": int(n), "engagement": (x / n) if n else None, "ci": (lo, hi) if n else None,
                "lift": None, "lift_ci": None}
         s = summary.get(arm)
-        if s and s.get("ok"):
+        if s and s.get("ok") and s.get("zero_engaged"):  # no log ratio exists for an arm with 0 engaged
+            rec["lift"] = s["lift"]
+        elif s and s.get("ok"):
             eff = math.log1p(s["lift"])
             rec["lift"] = s["lift"]
             rec["lift_ci"] = (math.expm1(eff - Z95 * s["se"]), math.expm1(eff + Z95 * s["se"]))

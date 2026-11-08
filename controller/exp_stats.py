@@ -193,6 +193,7 @@ def holm_order(zs: Mapping[str, float], family_size: int, alpha: float, boundary
     """
     out: dict[str, dict] = {}
     stopped = False
+    family_size = max(family_size, len(zs))
     for rank, arm in enumerate(sorted(zs, key=lambda a: (-zs[a], a)), start=1):
         a_adj = alpha / max(1, family_size - rank + 1)
         b = boundary(a_adj, arm)

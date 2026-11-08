@@ -68,6 +68,42 @@ def design_information() -> float:
     return (za + zb) ** 2 / math.log(1 + settings.EXP_DESIGN_MDE) ** 2
 
 
+_Z_FLOOR_P = 1e-15  # keeps the zero-engaged z finite (about -7.9)
+
+
+def zero_engaged_z(p_ctrl: float, n_eff: float) -> float:
+    """z of "no engagement in ``n_eff`` independent leads" when the control rate is ``p_ctrl``: -Phi^-1(1 - (1 - p)^n).
+
+    Conservative: ``n_eff`` is the arm's number of distinct leads (clusters), not its connects."""
+    return _N.inv_cdf(max((1.0 - p_ctrl) ** n_eff, _Z_FLOOR_P))
+
+
+def _zero_rows(arm: es.Rows, ctl: es.Rows) -> tuple[float, float] | None:
+    """(control rate, arm leads) when the ARM has connects but none engaged and control has engagements, else None."""
+    n_a, x_a = es.totals(arm)
+    n_c, x_c = es.totals(ctl)
+    if n_a <= 0 or x_a > 0 or n_c <= 0 or x_c <= 0:
+        return None
+    return x_c / n_c, float(sum(1 for r in arm.values() if r[0] > 0))
+
+
+def zero_engaged_record(arm: es.Rows, ctl: es.Rows) -> dict | None:
+    """Cumulative summary fields of a zero-engaged arm: droppable and harm-stoppable, never testable for promotion."""
+    zr = _zero_rows(arm, ctl)
+    if zr is None:
+        return None
+    return {"ok": True, "zero_engaged": True, "rate_arm": 0.0, "rate_ctrl": zr[0], "lift": -1.0,
+            "z": zero_engaged_z(*zr), "se": 0.0, "info": 0.0, "clusters": int(zr[1])}
+
+
+def zero_engaged_recent(arm: es.Rows, ctl: es.Rows) -> dict | None:
+    """Recent-window fields of a zero-engaged arm (needs EXP_RECENT_MIN_CONNECTS connects)."""
+    zr = _zero_rows(arm, ctl)
+    if zr is None or es.totals(arm)[0] < settings.EXP_RECENT_MIN_CONNECTS:
+        return None
+    return {"recent_lift": -1.0, "recent_z": zero_engaged_z(*zr), "recent_lb": -1.0}
+
+
 def summarise(data: Mapping[str, ArmData], control: str, arms: Sequence[str]) -> dict[str, dict]:
     """Cumulative and recent contrasts of every arm against control (records are plain, JSON-able dicts)."""
     ctl = data.get(control, EMPTY)
@@ -77,12 +113,16 @@ def summarise(data: Mapping[str, ArmData], control: str, arms: Sequence[str]) ->
         c = pair_contrast(d, ctl)
         r = pair_contrast(d, ctl, recent=True)
         rec = {"n_arm": es.totals(d.engaged)[0], "n_ctrl": es.totals(ctl.engaged)[0], "ok": c is not None}
-        if c is not None:
+        if c is None:
+            rec.update(zero_engaged_record(d.engaged, ctl.engaged) or {})
+        else:
             rec.update(rate_arm=c.rate_a, rate_ctrl=c.rate_c, lift=c.lift, z=c.z, se=c.se, info=c.info,
                        clusters=c.clusters)
         rec["recent_n"] = es.totals(d.recent)[0]
         if r is not None:
             rec.update(recent_lift=r.lift, recent_z=r.z, recent_lb=r.lift_lower(settings.EXP_RECENT_Z))
+        else:
+            rec.update(zero_engaged_recent(d.recent, ctl.recent) or {})
         out[arm] = rec
     return out
 
@@ -190,7 +230,7 @@ def daily_look(data: Mapping[str, ArmData], control: str, active: Sequence[str],
             out.ramp.append(arm)
     if not test_winner or looks_taken >= len(settings.EXP_LOOK_FRACTIONS):
         return out
-    testable = {a: s for a, s in summary.items() if s["ok"] and a not in out.drop
+    testable = {a: s for a, s in summary.items() if s["ok"] and not s.get("zero_engaged") and a not in out.drop
                 and s["n_arm"] >= settings.EXP_MIN_ARM_CONNECTS_FOR_TEST}
     if not testable or max(s["t"] for s in testable.values()) < settings.EXP_LOOK_FRACTIONS[looks_taken]:
         return out

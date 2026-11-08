@@ -139,8 +139,8 @@ def sequential_alarm(c: es.Contrast | None, ts: Sequence[float], n_ctrl_min: flo
         return out
     t = min(1.0, c.info / epoch_information())
     out.update(t=round(t, 4), z=round(c.z, 3))
-    next_planned = (ts[-1] if ts else 0.0) + 0.1
-    if t + 1e-9 < next_planned or c.n_c < (n_ctrl_min if n_ctrl_min is not None else settings.EXP_DECAY_MIN_CONNECTS):
+    next_planned = min(1.0, (ts[-1] if ts else 0.0) + 0.1)  # a look past 0.9 must still reach t = 1
+    if (ts and ts[-1] >= 1.0) or t + 1e-9 < next_planned or c.n_c < (n_ctrl_min if n_ctrl_min is not None else settings.EXP_DECAY_MIN_CONNECTS):
         return out
     seq = list(ts) + [t]
     b = es.obf_boundary(seq, settings.EXP_DECAY_ALPHA)

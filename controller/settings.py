@@ -213,9 +213,7 @@ EXP_CUSUM_REF_BLOCKS = 3  # blocks after promotion that define the winner's own 
 EXP_CUSUM_K = 0.5  # allowance, in standard errors
 EXP_CUSUM_H = 3.0  # alarm threshold
 EXP_CUSUM_SHRINK_N = 20  # pseudo-connects pulling an (hour, cell) reference rate toward the pooled rate
-EXP_ROLLBACK_Z = -1.96  # winner significantly worse than the holdout
-EXP_ROLLBACK_HOLDOUT_MIN = 60  # holdout connects needed for the significance route
-EXP_HOLDOUT_WINDOW_MINUTES = 1440
+EXP_ROLLBACK_HOLDOUT_MIN = 60  # CUSUM route: recent holdout AND winner connects each needed for the holdout to confirm a rollback
 
 # --- two-stage promotion, sequential decay alarm, apply-time veto (docs/THRESHOLDS.md) ----------------------
 EXP_STAGE1_SHARE = 0.5  # stage 1: winner 50% / old control 50%
