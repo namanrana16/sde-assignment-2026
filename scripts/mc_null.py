@@ -307,7 +307,8 @@ class Run:
         self.epoch["ts"] = seq["ts"]
         data_stage = self._window_data(self.stage_start + 1)
         recent = er.pair_contrast(data_stage[winner], data_stage[CONTROL], recent=True)
-        held = {"recent_lift": recent.lift} if recent is not None else {}
+        held = {} if recent is None else {"recent_lift": recent.lift, "recent_holdout_connects": recent.n_c,
+                                          "recent_winner_connects": recent.n_a}
         cus = xd.cusum(self.blocks, self.level)
         roll, _ = xd.decide(cus, held, seq)
         if seq["epoch_done"] and not roll:
@@ -450,6 +451,9 @@ def scenarios(latencies=(2.0, 8.0, 20.0)) -> list[tuple[str, Scenario, str]]:
                                           drift=True, groups=False, latency_h=8.0, full_pipeline=True), "decay"))
     stable = [("stable15", Scenario("stable winner A +15% (never decays), approval 8 h", {"A": 0.15}, days=16, groups=False,
                                     latency_h=8.0, full_pipeline=True), "stable")]
+    for lift in (0.05, 0.08):  # appended after stable15 so every earlier row keeps its seed
+        stable.append((f"stable{lift * 100:g}", Scenario(f"stable winner A +{lift:.0%} (never decays), approval 8 h", {"A": lift},
+                                                          days=16, groups=False, latency_h=8.0, full_pipeline=True), "stable"))
     return base + decay + stable
 
 
