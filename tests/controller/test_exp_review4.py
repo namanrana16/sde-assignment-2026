@@ -80,3 +80,23 @@ def test_an_arm_with_engagement_keeps_its_record_unchanged():
     s = er.summarise(data, "C", ["A"])["A"]
     c = es.contrast(data["A"].engaged, data["C"].engaged)
     assert s["z"] == c.z and s["lift"] == c.lift and s["info"] == c.info and "zero_engaged" not in s
+
+
+def test_every_epoch_ends_once_information_reaches_the_design_value_whatever_the_growth_path():
+    """Lifecycle property: for any increasing information path, the epoch reaches epoch_done, never stalls.
+
+    This is the test that would have caught the round-4 stall (looks overshooting 0.1 steps).
+    """
+    import random
+    rng = random.Random(7)
+    for _ in range(40):  # each look integrates a boundary: keep the test fast
+        ts, t, done = [], 0.0, False
+        for _step in range(400):
+            t = min(1.2, t + rng.uniform(0.005, 0.2))  # information keeps growing, in uneven steps
+            out = xd.sequential_alarm(_contrast(t), ts)
+            ts = out["ts"]
+            if out["epoch_done"]:
+                done = True
+                break
+        assert done, f"epoch stalled: looks {ts}"
+        assert ts[-1] >= 1.0 and all(b > a for a, b in zip(ts, ts[1:]))
