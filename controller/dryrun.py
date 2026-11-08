@@ -175,7 +175,8 @@ def _schedule_entry(store, vocab, wf, old, new, group, cells, shares, window) ->
 
     eo, en = expected(ow), expected(nw)
     return {"cohort": group, "kpi": "pickup_rate", "method": "hour re-weighting replay (approximation:"
-            " capacity per hour is fixed; weights only change who is called)",
+            " capacity per hour is fixed; weights only change who is called); impact score counts "
+                      f"{int(settings.SCHEDULE_LIFT_HAIRCUT * 100)}% of this point lift (a replay has no CI)",
             "evidence": "observed" if eo and en is not None else "no_evidence",
             "expected_old": None if eo is None else round(eo, 4),
             "expected_new": None if en is None else round(en, 4),

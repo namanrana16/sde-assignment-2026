@@ -226,3 +226,22 @@ CREATE TABLE IF NOT EXISTS exp_day_cache (
     payload TEXT NOT NULL,
     PRIMARY KEY (workflow_id, day, col, cells)
 );
+
+-- append-only audit trail: enforced in the database, not only by convention
+CREATE TRIGGER IF NOT EXISTS decisions_no_update BEFORE UPDATE ON decisions
+BEGIN SELECT RAISE(ABORT, 'append-only audit table'); END;
+CREATE TRIGGER IF NOT EXISTS decisions_no_delete BEFORE DELETE ON decisions
+BEGIN SELECT RAISE(ABORT, 'append-only audit table'); END;
+CREATE TRIGGER IF NOT EXISTS alerts_no_update BEFORE UPDATE ON alerts
+BEGIN SELECT RAISE(ABORT, 'append-only audit table'); END;
+CREATE TRIGGER IF NOT EXISTS alerts_no_delete BEFORE DELETE ON alerts
+BEGIN SELECT RAISE(ABORT, 'append-only audit table'); END;
+CREATE TRIGGER IF NOT EXISTS proposal_events_no_delete BEFORE DELETE ON proposal_events
+BEGIN SELECT RAISE(ABORT, 'append-only audit table'); END;
+-- the one legitimate update: linking an event to its proposal (proposal_id NULL -> value)
+CREATE TRIGGER IF NOT EXISTS proposal_events_no_update BEFORE UPDATE ON proposal_events
+WHEN NOT (OLD.proposal_id IS NULL
+          AND NEW.id IS OLD.id AND NEW.event_id IS OLD.event_id AND NEW.approval_id IS OLD.approval_id
+          AND NEW.workflow_id IS OLD.workflow_id AND NEW.ts_minute IS OLD.ts_minute
+          AND NEW.event IS OLD.event AND NEW.payload IS OLD.payload)
+BEGIN SELECT RAISE(ABORT, 'append-only audit table'); END;

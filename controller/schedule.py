@@ -351,7 +351,9 @@ def schedule_producer(ctx: PlanContext, wid: str) -> list[DesiredChange]:
     evidence = {"rationale": _summary(plan, not cfg[1].get("cohorts")), "impact_override": _impact(plan),
                 "dry_run_extra": {"schedule_guardrail": {
                     "method": "recent dials re-weighted by the new tables (capacity per hour fixed, cohort shares "
-                              "proportional to volume x weight); engagement of connected leads re-composed",
+                              "proportional to volume x weight); engagement of connected leads re-composed; impact "
+                              f"score counts {int(settings.SCHEDULE_LIFT_HAIRCUT * 100)}% of this point lift "
+                              "(a replay has no CI)",
                     **plan["estimate"], "max_drop": plan["max_drop"], "blocked": plan["blocked"]}}}
     if not cfg[1].get("cohorts"):  # Day-0 bundle: cohorts + tables, always an approval
         patch = {"cohorts": plan["cohorts"], "hour_weights": plan["tables"]}
