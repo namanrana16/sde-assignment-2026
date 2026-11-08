@@ -79,6 +79,8 @@ def cusum(blocks: Sequence[Block], reference: Block | None = None) -> dict:
 
     The reference is the winner's own level just BEFORE promotion when it has enough data (a decay that is already
     under way when the winner goes live would otherwise be baked into the reference), else its first blocks after.
+    The pre-promotion level is capped at EXP_CUSUM_REF_CAP_LIFT over the old control: the winner was selected on a high
+    reading inside that very window, so an uncapped reference reads a stable winner's regression to its true level as decay.
     """
     k_ref = 0 if reference else settings.EXP_CUSUM_REF_BLOCKS
     out = {"blocks": len(blocks), "alarm": False, "S": 0.0, "ref_ratio": None, "last_ratio": None,
@@ -90,6 +92,8 @@ def cusum(blocks: Sequence[Block], reference: Block | None = None) -> dict:
     e0 = ref[2]
     if e0 <= 0:  # a zero reference expectation has no ratio to track: no alarm
         return out
+    if reference:  # selected-window reference: the winner was picked on a lucky stretch of it (winner's curse)
+        ref = (ref[0], min(ref[1], e0 * (1.0 + settings.EXP_CUSUM_REF_CAP_LIFT)), ref[2], ref[3])
     se0 = math.sqrt(ref[3]) / e0
     r0 = ref[1] / e0
     s, first_alarm = 0.0, None

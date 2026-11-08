@@ -67,8 +67,10 @@ def test_desired_matching_and_patch_shape():
 
 
 def test_pre_promotion_reference_catches_a_decay_that_was_already_under_way():
-    # level before promotion 1.10; the winner goes live already at ~1.0: relative to its first post blocks nothing changes
-    flat_after = blocks([1.0] * 10)
+    # level before promotion 1.10; the winner goes live already decaying, below control (~0.9): relative to its first
+    # post blocks nothing changes. (A winner merely back at control level, 1.0, no longer alarms: the reference is capped
+    # at +EXP_CUSUM_REF_CAP_LIFT to remove the winner's-curse inflation, round 5; the sequential route covers it.)
+    flat_after = blocks([0.9] * 10)
     assert not xd.cusum(flat_after)["alarm"]
     ref = (600.0, 1.10 * 300, 300.0, 600 * 0.25)  # (n, engaged, expected, variance) over the last 48 h before promotion
     c = xd.cusum(flat_after, ref)

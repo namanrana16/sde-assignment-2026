@@ -214,12 +214,16 @@ EXP_CUSUM_K = 0.5  # allowance, in standard errors
 EXP_CUSUM_H = 3.0  # alarm threshold
 EXP_CUSUM_SHRINK_N = 20  # pseudo-connects pulling an (hour, cell) reference rate toward the pooled rate
 EXP_ROLLBACK_HOLDOUT_MIN = 60  # CUSUM route: recent holdout AND winner connects each needed for the holdout to confirm a rollback
+# the pre-promotion reference was measured in the window that SELECTED the winner (winner's curse); cap its lift over the old
+# control at the promotion's minimum point lift, so a winner that merely regresses to its true level does not read as decay
+EXP_CUSUM_REF_CAP_LIFT = EXP_MIN_POINT_LIFT
 
 # --- two-stage promotion, sequential decay alarm, apply-time veto (docs/THRESHOLDS.md) ----------------------
 EXP_STAGE1_SHARE = 0.5  # stage 1: winner 50% / old control 50%
 EXP_STAGE1_MIN_MINUTES = 1440  # stage 2 only after >= 24 h at stage 1
 EXP_VETO_Z = 0.84  # apply-time: recent-window one-sided 80% lower bound of the lift must be > 0
-EXP_DECAY_ALPHA = 0.10  # one-sided level of the sequential winner-vs-control rollback test per monitoring epoch
+# 0.10 until round 5; 0.05 halved stable-winner false rollbacks for 3-7% more decay exposure (reports/mc_null.md)
+EXP_DECAY_ALPHA = 0.05  # one-sided level of the sequential winner-vs-control rollback test per epoch
 EXP_DECAY_DESIGN_LIFT = 0.15  # an epoch ends when its information would give 80% power at a -15% lift
 EXP_DECAY_MIN_CONNECTS = 60  # control connects needed before the sequential test can alarm
 EXP_REVERT_MAX_EXPECTED_DROP = 0.0  # an end-of-experiment revert must not be expected-harmful on observed arm rates

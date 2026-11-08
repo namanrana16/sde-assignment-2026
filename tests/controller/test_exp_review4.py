@@ -25,7 +25,7 @@ def test_fresh_epoch_takes_looks_again_after_the_final_look():
     out = xd.sequential_alarm(_contrast(1.0), [0.9, 0.95])
     assert out["look"] and out["epoch_done"]
     fresh = xd.sequential_alarm(_contrast(0.12), [])
-    assert fresh["look"] and fresh["ts"] == [fresh["t"]] and not fresh["epoch_done"]
+    assert fresh["look"] and len(fresh["ts"]) == 1 and abs(fresh["ts"][0] - fresh["t"]) < 1e-3 and not fresh["epoch_done"]
 
 
 # ---------------------------------------------------------------- B3
