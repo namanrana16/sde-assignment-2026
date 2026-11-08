@@ -428,6 +428,7 @@ def run(sc: Scenario, runs: int, base_seed: int, pool) -> dict:
         out["share_onset2_le_01"] = float(np.mean([s <= 0.1 for s in sh])) if sh else None
         lat = [r["rolled_back"] - r["stage1"] for r in live if r["rolled_back"] is not None]
         out["median_rb_ticks"] = float(np.median(lat)) if lat else None
+        out["rb_given_live"] = (sum(r["rolled_back"] is not None for r in live) / len(live)) if live else None
     return out
 
 
@@ -447,7 +448,9 @@ def scenarios(latencies=(2.0, 8.0, 20.0)) -> list[tuple[str, Scenario, str]]:
                                          groups=False, latency_h=8.0, rollback="auto", full_pipeline=True), "decay"))
     decay.append(("decay_drift", Scenario("decaying A + drift, approval 8 h, rollback by approval", days=16, decay=True,
                                           drift=True, groups=False, latency_h=8.0, full_pipeline=True), "decay"))
-    return base + decay
+    stable = [("stable15", Scenario("stable winner A +15% (never decays), approval 8 h", {"A": 0.15}, days=16, groups=False,
+                                    latency_h=8.0, full_pipeline=True), "stable")]
+    return base + decay + stable
 
 
 def render(rows: list[dict]) -> list[str]:
@@ -492,6 +495,22 @@ def render(rows: list[dict]) -> list[str]:
         lines.append(f"| {r['label']} | {r['runs']} | {r['stage1']:.1%} | {r['stage2']:.1%} | {r['rolled_back']:.1%} | "
                      f"{f(r['exposure'])} | {f(r['share_onset2'])} | {f(r['share_onset2_le_01'], True)} | "
                      f"{'-' if r['median_rb_ticks'] is None else f'{r['median_rb_ticks']:.0f}'} |")
+    lines += render_stable([x for x in rows if x["kind"] == "stable"])
+    return lines
+
+
+def render_stable(rows: list[dict]) -> list[str]:
+    """False-rollback rate of a promoted winner whose lift stays at its true value (multi-epoch false-alarm rate)."""
+    lines = ["", "## Stable winner (false rollback over the monitoring window)", "",
+             f"A promoted winner whose true lift stays at +15% for the whole 16-day run. The sequential decay test runs "
+             f"at alpha {settings.EXP_DECAY_ALPHA} per epoch and restarts every epoch, so the false-rollback rate over the "
+             "monitoring window is measured here, not assumed: rolled back = the stable winner is removed again within 16 days "
+             "(over runs where it was promoted).", "",
+             "| scenario | runs | promotion (stage 1) | stage 2 | false rollback (of all runs) | false rollback (of promoted) |",
+             "|---|---|---|---|---|---|"]
+    for r in rows:
+        rb = "-" if r["rb_given_live"] is None else f"{r['rb_given_live']:.1%}"
+        lines.append(f"| {r['label']} | {r['runs']} | {r['stage1']:.1%} | {r['stage2']:.1%} | {r['rolled_back']:.1%} | {rb} |")
     return lines
 
 
@@ -505,7 +524,7 @@ def main() -> None:
     rows = []
     with ProcessPoolExecutor() as pool:
         for i, (key, sc, kind) in enumerate(scenarios()):
-            n = ns.runs if key == "null" else (ns.decay_runs if kind == "decay" else ns.power_runs)
+            n = ns.runs if key == "null" else (ns.decay_runs if kind in ("decay", "stable") else ns.power_runs)
             row = run(sc, n, 10_000 * (i + 1), pool)
             row["kind"] = kind
             rows.append(row)
