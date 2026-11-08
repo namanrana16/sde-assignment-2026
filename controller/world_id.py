@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from .client import SimClient
+from .ingest import anchor_epoch
 from .store import Store
 
 log = logging.getLogger(__name__)
@@ -106,7 +107,25 @@ def open_world_store(client: SimClient, state_dir: str | Path) -> tuple[Store, W
         store.set_meta("fingerprint", world.fingerprint)
         store.set_meta("scenario", world.scenario)
     note_progress(store, state, world)
+    _anchor_epoch_from_state(store, state)
     return store, world, fresh
+
+
+def _anchor_epoch_from_state(store: Store, state: dict) -> None:
+    """Verify the ts epoch against /sim/state before any chunk is ingested; alert (once per process start) if shifted.
+
+    A state without ``ts`` (an older simulator) keeps the contract epoch: nothing to verify against.
+    """
+    if not state.get("ts"):
+        log.warning("/sim/state has no ts: keeping the contract epoch, unverified")
+        return
+    delta = anchor_epoch(state["ts"], state["sim_minute"])
+    if delta == 0:
+        return
+    msg = (f"sim ts {state['ts']} at sim_minute {state['sim_minute']} is {delta} minutes off the "
+           f"contract epoch; event timestamps re-anchored by {delta} minutes")
+    log.warning(msg)
+    store.add_alert(state["sim_minute"], "warn", "epoch_reanchored", msg)
 
 
 def _archive(path: Path) -> None:
