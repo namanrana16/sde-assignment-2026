@@ -300,6 +300,10 @@ def _suggest(ctx: PlanContext, wid: str, body: dict, live: str, min_pass: float,
     s = body["stats"]
     problem = (f"Hallucination flag rate {s.get('rate', 0):.1%} on prompt {live} "
                f"(baseline {s.get('base_rate', 0):.1%}, n={s.get('n', 0)}); need a safe replacement")
+    try:
+        balance_before = ctx.client.credits_remaining()  # read BEFORE marking: a failed read pays nothing
+    except (OutcomeUnknown, SimUnavailable):
+        return  # nothing marked, nothing paid: the next tick tries again
     body["suggested"] = True
     body["credits_spent"] += settings.SUGGEST_FIXES_COST
     if persist:
@@ -307,7 +311,10 @@ def _suggest(ctx: PlanContext, wid: str, body: dict, live: str, min_pass: float,
     try:
         resp = call_with_credit_ledger(ctx.client, ctx.store, wid, ctx.now, "suggest-fixes",
                                        ctx.client.suggest_fixes, wid, problem)
-    except (OutcomeUnknown, SimUnavailable):
+    except (OutcomeUnknown, SimUnavailable) as exc:
+        _handle_lost_suggest(ctx, wid, body, balance_before, exc)
+        if persist:
+            persist()
         return
     body["pending_suggestions"] = [sug["prompt_version"] for sug in resp.get("suggestions", [])]
     if persist:
@@ -315,6 +322,24 @@ def _suggest(ctx: PlanContext, wid: str, body: dict, live: str, min_pass: float,
     _validate_suggestions(ctx, wid, body, live, min_pass)
     if persist:
         persist()
+
+
+def _handle_lost_suggest(ctx: PlanContext, wid: str, body: dict, balance_before: float, exc: Exception) -> None:
+    """The paid call's answer never arrived. Not charged: allow ONE retry on a later tick. Charged (or unknowable):
+    never pay twice; record that the suggestions were paid but lost."""
+    try:
+        charged = round(balance_before - ctx.client.credits_remaining(), 4) > 0
+    except (OutcomeUnknown, SimUnavailable):
+        charged = True  # cannot tell: assume it was paid
+    if not charged and not body.get("suggest_retry_used"):  # OutcomeUnknown or SimUnavailable, provably unpaid
+        body["suggested"], body["suggest_retry_used"] = False, True
+        body["credits_spent"] -= settings.SUGGEST_FIXES_COST
+        ctx.store.add_decision(ctx.now, "suggest_fixes_retry", "suggest-fixes outcome unknown but no credits charged;"
+                               " asking once more on a later tick", wid, {"retry": True})
+        return
+    if charged:
+        ctx.store.add_decision(ctx.now, "suggestions_paid_but_lost", "suggest-fixes was charged but the answer was lost;"
+                               " not paying again for this incident", wid, {"credits": settings.SUGGEST_FIXES_COST})
 
 
 def _validate_suggestions(ctx: PlanContext, wid: str, body: dict, live: str, min_pass: float) -> None:
