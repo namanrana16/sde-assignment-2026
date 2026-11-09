@@ -1,4 +1,4 @@
-"""CLI: ``python -m controller run|status|why|view|ui``."""
+"""CLI: ``python -m controller run|status|why|view|ui|person-analysis``."""
 from __future__ import annotations
 
 import argparse
@@ -81,7 +81,16 @@ def _resolve_db(args: argparse.Namespace) -> Path | None:
     return _latest_db(args.state_dir)
 
 
-def _build_why(store: Store, args: argparse.Namespace) -> tuple[dict, str] | None:
+def _require_db(args: argparse.Namespace) -> Path | None:
+    """The database file to read, or None after printing why there is none."""
+    db = _resolve_db(args)
+    if db is None or not db.exists():
+        print(f"no state database found ({db or args.state_dir})")
+        return None
+    return db
+
+
+def _build_why(store: Store, args: argparse.Namespace) -> tuple[dict, str]:
     from . import audit_render as ar
     if args.lead:
         rep = audit.why_lead(store, args.lead, args.day)
@@ -99,30 +108,24 @@ def _build_why(store: Store, args: argparse.Namespace) -> tuple[dict, str] | Non
 
 
 def cmd_why(args: argparse.Namespace) -> int:
-    db = _resolve_db(args)
-    if db is None or not db.exists():
-        print(f"no state database found ({db or args.state_dir})")
-        return 1
     store = _open_ro(args)  # audit only reads: never run the schema script / migrations on a live DB
     if store is None:
         return 1
     try:
-        built = _build_why(store, args)
+        rep, text = _build_why(store, args)
     except ValueError as exc:
         print(exc)
         return 2
     finally:
         store.close()
-    rep, text = built  # type: ignore[misc]
     print(json.dumps(rep, indent=2, default=str) if args.json else text)
     return 0
 
 
 def _open_ro(args: argparse.Namespace):
     from . import view_data
-    db = _resolve_db(args)
-    if db is None or not db.exists():
-        print(f"no state database found ({db or args.state_dir})")
+    db = _require_db(args)
+    if db is None:
         return None
     try:
         store = view_data.open_readonly(db)
@@ -181,23 +184,20 @@ def cmd_view(args: argparse.Namespace) -> int:
 
 def cmd_ui(args: argparse.Namespace) -> int:
     from . import ui
-    db = _resolve_db(args)
-    if db is None or not db.exists():
-        print(f"no state database found ({db or args.state_dir})")
+    db = _require_db(args)
+    if db is None:
         return 1
     return ui.serve(db, args.port, args.host)
 
 
 def cmd_person_analysis(args: argparse.Namespace) -> int:
     from . import person_analysis, view_data
-    db = _resolve_db(args)
-    if db is None or not db.exists():
-        print(f"no state database found ({db or args.state_dir})")
+    db = _require_db(args)
+    if db is None:
         return 1
-    persist = args.persist and not args.no_persist
-    store = Store(db) if persist else view_data.open_readonly(db)  # read-only unless --persist is explicit
+    store = Store(db) if args.persist else view_data.open_readonly(db)  # read-only unless --persist is explicit
     try:
-        report = person_analysis.run(store, view_data.now_minute(store), persist=persist)
+        report = person_analysis.run(store, view_data.now_minute(store), persist=args.persist)
     finally:
         store.close()
     print(json.dumps(report, indent=2) if args.json else person_analysis.render(report))
@@ -248,7 +248,6 @@ def main(argv: list[str] | None = None) -> int:
     pa.add_argument("--state-dir", default=settings.DEFAULT_STATE_DIR)
     pa.add_argument("--db", default=None, help="explicit database file (default: newest in --state-dir)")
     pa.add_argument("--persist", action="store_true", help="write person_analysis rows and a decision into the store (default: read-only)")
-    pa.add_argument("--no-persist", action="store_true", help="deprecated no-op: read-only is already the default")
     pa.add_argument("--json", action="store_true")
     args = ap.parse_args(argv)
     logging.getLogger("httpx").setLevel(logging.WARNING)

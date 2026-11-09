@@ -14,6 +14,7 @@ from typing import Any
 
 from . import cube, settings
 from .audit import fmt_minute
+from .stats import wilson_lower, wilson_upper
 from .store import Store
 
 DAY = settings.MINUTES_PER_DAY
@@ -27,7 +28,7 @@ class ReadOnlyStore(Store):
 
     readonly = True  # derived-cache writers (exp_data) check this and skip their write
 
-    def __init__(self, path: str | Path) -> None:  # noqa: super().__init__ would open read-write
+    def __init__(self, path: str | Path) -> None:  # deliberately not calling super().__init__: it would open read-write
         self.path = Path(path)
         if not self.path.exists():
             raise FileNotFoundError(str(self.path))
@@ -107,16 +108,6 @@ def _state(store: Store, detector: str, key: str) -> dict:
     return json.loads(r[0]["value"]) if r else {}
 
 
-def wilson(x: float, n: float) -> tuple[float, float]:
-    if n <= 0:
-        return 0.0, 1.0
-    p = x / n
-    d = 1 + Z95 ** 2 / n
-    centre = (p + Z95 ** 2 / (2 * n)) / d
-    half = Z95 * math.sqrt(p * (1 - p) / n + Z95 ** 2 / (4 * n * n)) / d
-    return max(0.0, centre - half), min(1.0, centre + half)
-
-
 # ------------------------------------------------------------------ (a) what is being tested
 def _arm_stats(store: Store, wid: str, dim: str, st: dict, now: int) -> dict[str, dict]:
     """Per-arm connects, engagement (Wilson 95% CI) and lift vs control (clustered log-ratio CI)."""
@@ -133,7 +124,7 @@ def _arm_stats(store: Store, wid: str, dim: str, st: dict, now: int) -> dict[str
         d = data.get(arm, exp_rules.EMPTY)
         n = sum(v[0] for v in d.engaged.values())
         x = sum(v[1] for v in d.engaged.values())
-        lo, hi = wilson(x, n)
+        lo, hi = wilson_lower(x, n), wilson_upper(x, n)
         rec = {"connects": int(n), "engagement": (x / n) if n else None, "ci": (lo, hi) if n else None,
                "lift": None, "lift_ci": None}
         s = summary.get(arm)

@@ -1,7 +1,6 @@
 """One-screen text supervisor view (C11): ``python -m controller view --workflow W [--at "Day N HH:MM"] [--weekly]``."""
 from __future__ import annotations
 
-from . import view_data as vd
 from .audit import fmt_minute
 
 

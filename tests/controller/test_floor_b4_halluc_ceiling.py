@@ -22,7 +22,7 @@ def store(tmp_path):
 def _state(live_n, live_flags, base=(20000, 300), cold=False):
     st = hd.fresh_state()
     st["first_prompt"], st["base_frozen"] = "P1", True
-    st["base"] = [0, 0, 0.0, 0] if cold else [base[0], base[1], base[0] * 0.93, base[0] // 2]
+    st["base"] = [0, 0, 0] if cold else [base[0], base[1], base[0] // 2]
     st["prompts"]["P1"] = {"total": [live_n, live_flags, live_n * 0.93, live_n // 2], "first_ts": -5000, "last_ts": NOW,
                            "hours": {str(NOW // 60): [live_n, live_flags, live_n * 0.93, live_n // 2]}}
     return st
@@ -48,10 +48,10 @@ def test_ceiling_still_applies_on_a_cold_start_with_no_baseline(store):
 
 
 def test_ceiling_with_a_baseline_is_raised_to_the_baseline_not_below_governance():
-    assert hl._effective_ceiling(WF, [20000, 300, 0, 0]) > 0.015
-    assert hl._effective_ceiling(WF, [20000, 0, 0, 0]) == pytest.approx(0.01)
+    assert hl._effective_ceiling(WF, [20000, 300, 0]) > 0.015
+    assert hl._effective_ceiling(WF, [20000, 0, 0]) == pytest.approx(0.01)
     assert hl._effective_ceiling(WF, None) == pytest.approx(0.01)
-    assert hl._effective_ceiling(WF, [0, 0, 0, 0]) == pytest.approx(0.01)
+    assert hl._effective_ceiling(WF, [0, 0, 0]) == pytest.approx(0.01)
 
 
 def test_borderline_known_good_validation_is_revalidated_once_at_n300(store):
@@ -84,8 +84,8 @@ def test_far_below_min_pass_is_not_revalidated(store):
 def test_verify_uses_the_same_effective_ceiling_as_detection(store):
     """D2: a healthy replacement at the known-good baseline rate must close an absolute incident."""
     st = hd.fresh_state()
-    st["prompts"]["K"] = {"total": [20000, 300, 18600.0, 10000], "hours": {}, "first_ts": -9000, "last_ts": 3000}
-    hd._apply_group(st, "P9", 100, [10000, 150, 9300.0, 5000], 5940, 6000)  # 1.5% live, bar 1%
+    st["prompts"]["K"] = {"total": [20000, 300, 10000], "hours": {}, "first_ts": -9000, "last_ts": 3000}
+    hd._apply_group(st, "P9", 100, [10000, 150, 5000], 5940, 6000)  # 1.5% live, bar 1%
     body = hl._new_body("P2", None, {"rate": 0.05, "base_rate": 0.0, "n": 300, "p": 0.0}, {}, "prompt_flag_ceiling")
     inc_id = incidents.open_incident(store, "w", "halluc", 4000, body)
     ctx = PlanContext(store, None, {"w": WF}, 6000)

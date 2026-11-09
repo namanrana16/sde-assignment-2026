@@ -1,4 +1,4 @@
-"""A2: Day-0 sibling prompt safety check, and the guarded switch it can trigger.
+"""Day-0 sibling prompt safety check, and the guarded switch it can trigger.
 
 After the live prompt is validated (halluc Day 0), each other catalogue prompt (at most ``SIBLING_MAX``, catalogue
 order, only while the incident credit reserve of every workflow stays intact) is validated at modest n. A sibling is
@@ -19,7 +19,8 @@ from ..stats import non_inferior, rate_greater_test, wilson_lower, wilson_upper
 from . import halluc_data as hd
 from .common import latest_config, load_state, save_state
 from .halluc import KIND as HALLUC_KIND
-from .halluc import _ceiling, _max_engagement_drop, engagement_ok
+from . import halluc
+from .halluc import engagement_ok, max_engagement_drop
 
 log = logging.getLogger(__name__)
 DETECTOR = "prompt_safety"
@@ -84,7 +85,7 @@ def _check_workflow(ctx: PlanContext, wid: str, live: str) -> dict:
     if not live_runs:
         return out
     clear: list[tuple[float, str, dict]] = []
-    ceiling, live_topped = _ceiling(wf), False
+    ceiling, live_topped = halluc.ceiling(wf), False
     for prompt in [p for p in wf["options"]["prompt_version"] if p != live][:settings.SIBLING_MAX]:
         runs = _validate_sibling(ctx, wid, prompt, out)
         if runs is None:
@@ -127,10 +128,10 @@ def _verify(ctx: PlanContext, wid: str, st: dict, live: str) -> None:
     if new[0] < settings.HALLUC_VERIFY_MIN_CONNECTS:
         return
     old = hd.total_counts(hst, st["old"])
-    margin = _ceiling(wf) * settings.HALLUC_FLAG_MARGIN_FRACTION
+    margin = halluc.ceiling(wf) * settings.HALLUC_FLAG_MARGIN_FRACTION
     flags_ok = non_inferior(new[1], new[0], old[1], old[0], margin)
     p_worse = rate_greater_test(new[1], new[0], old[1], old[0])
-    eng_ok, eng = engagement_ok(new, old, _max_engagement_drop(wf))
+    eng_ok, eng = engagement_ok(new, old, max_engagement_drop(wf))
     info = {"prompt": live, "old": st["old"], "n": new[0], "flag_rate": round(new[1] / new[0], 5),
             "old_flag_rate": round(old[1] / old[0], 5) if old[0] else None, "flags_ok": flags_ok,
             "engagement_ok": eng_ok, "p_worse": p_worse, **eng}
@@ -200,7 +201,7 @@ def sibling_producer(ctx: PlanContext, wid: str) -> list[DesiredChange]:
     if cfg is None or not st or open_incidents(ctx.store, wid, HALLUC_KIND):
         return []
     live, phase = cfg[1]["prompt_version"], st.get("phase")
-    ceiling = max(_ceiling(ctx.workflows[wid]), 1e-9)
+    ceiling = max(halluc.ceiling(ctx.workflows[wid]), 1e-9)
     if phase == RECOMMENDED and live == st["live"]:
         e = st["evidence"]
         summary = (f"Safety improvement: switch prompt {live} -> {st['candidate']}: validation failure rate "

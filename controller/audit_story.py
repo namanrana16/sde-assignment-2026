@@ -5,11 +5,14 @@ a :func:`controller.audit.why_at` result; :mod:`controller.audit_render` turns t
 """
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from . import audit, settings
 from .configlib import config_diff
 from .stats import p_text
+
+log = logging.getLogger(__name__)
 
 DAY = settings.MINUTES_PER_DAY
 _EXP = ("experiment_revert", "experiment_promote", "experiment_conclude", "experiment_entry",
@@ -66,6 +69,7 @@ def short_change(store, wid: str, version: int) -> str:
     try:
         diff = config_diff(old, new)
     except (KeyError, TypeError):
+        log.debug("config diff v%s -> v%s of %s unavailable", version - 1, version, wid, exc_info=True)
         return "(diff unavailable)"
     parts: list[str] = []
     if "prompt_version" in diff:
