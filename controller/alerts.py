@@ -14,6 +14,7 @@ from __future__ import annotations
 import json
 import logging
 import math
+import sqlite3
 from dataclasses import dataclass
 from typing import Mapping
 
@@ -37,11 +38,11 @@ DRIFT_MIN_BASE_N = 30
 # The approver's own hygiene reasons (sim/world.py approval decision): any of these means OUR request was malformed or
 # mis-accounted, so it pages. Everything else (the "judgement call" decline, or no reason) is a digest. Never both.
 FATIGUE_REASON = "fatigue"
-HYGIENE_REASONS = (FATIGUE_REASON, "must all be non-empty", "must be a non-negative integer", "must be in [0,1]",
-                   "prompt changes need evidence", "validation pass rate")
+# Substrings of the sim's hygiene reasons: fatigue; "...must all be non-empty", "...must be a non-negative integer",
+# "...must be in [0,1]"; "prompt changes need evidence..."; "validation pass rate ...".
+HYGIENE_REASONS = (FATIGUE_REASON, "must", "evidence", "pass rate")
 STARVE_MARKER = "eval:starved"
 RULE_FAILED_CODE = "observability_rule_failed"
-WHY = 'python -m controller why --workflow {wid} --at "{at}"'
 
 
 @dataclass(frozen=True)
@@ -53,9 +54,10 @@ class Alert:
     message: str
 
 
-def _is_hygiene(payload: str | None) -> bool:
-    text = (payload or "").lower()
-    return any(w in text for w in HYGIENE_REASONS)
+def is_hygiene_reason(text: str | None) -> bool:
+    """Is this approver rejection reason one of the hygiene (soft-check) reasons, i.e. OUR request was wrong?"""
+    lowered = (text or "").lower()
+    return any(w in lowered for w in HYGIENE_REASONS)
 
 
 def _rows(store: Store, sql: str, args: tuple = ()) -> list[tuple]:
@@ -138,7 +140,7 @@ def repeated_5xx(store: Store, now: int) -> list[Alert]:
         cur = _rows(store, "SELECT c5xx FROM metrics_ext ORDER BY id DESC LIMIT 1")
         old = _rows(store, "SELECT c5xx FROM metrics_ext WHERE sim_minute<=? ORDER BY id DESC LIMIT 1", (now - 60,)) or \
             _rows(store, "SELECT c5xx FROM metrics_ext ORDER BY id LIMIT 1")
-    except Exception:  # noqa: BLE001 - table missing on a foreign DB
+    except sqlite3.OperationalError:  # a store opened without metrics_ext (foreign/older DB, or the first tick)
         return []
     if not cur or not old or cur[0][0] - old[0][0] < SERVER_ERRORS_PER_HOUR:
         return []
@@ -152,7 +154,7 @@ def accounting_bugs(store: Store, now: int) -> list[Alert]:
     """A fatigue rejection or a 403 means the controller's own accounting/pre-checks are wrong."""
     out = []
     for approval_id, wid, payload in _rows(store, "SELECT approval_id, workflow_id, payload FROM proposal_events WHERE event='rejected'"):
-        if not _is_hygiene(payload):
+        if not is_hygiene_reason(payload):
             continue
         look = f"`python -m controller why --workflow {wid} --at \"{fmt_minute(now)}\"`"
         if FATIGUE_REASON in (payload or "").lower():
@@ -187,11 +189,11 @@ def cohort_mismatch(store: Store, now: int) -> list[Alert]:
 # ------------------------------------------------------------------ DIGEST rules
 def judgement_rejections(store: Store, now: int) -> list[Alert]:
     out = []
-    for pid, wid, kind, aid, payload in _rows(
-            store, "SELECT p.proposal_id, p.workflow_id, p.kind, p.approval_id, "
+    for pid, wid, kind, payload in _rows(
+            store, "SELECT p.proposal_id, p.workflow_id, p.kind, "
                    "(SELECT e.payload FROM proposal_events e WHERE e.approval_id=p.approval_id AND e.event='rejected' LIMIT 1)"
                    " FROM proposals p WHERE p.state='REJECTED'"):
-        if _is_hygiene(payload):
+        if is_hygiene_reason(payload):
             continue  # a hygiene rejection is a controller bug, not a judgement call: handled as a page
         out.append(Alert(f"once:rejected:{pid}", DIGEST, "judgement_rejection", wid,
                          f"The approver rejected {kind} ({pid}): {payload or 'no reason given'}. Nothing was changed. Look: "
@@ -231,22 +233,22 @@ def starved_experiments(store: Store, now: int) -> list[Alert]:
     return [Alert(f"cond:starved:{key}", DIGEST, "starved_experiment", wid, msg) for key, wid, msg in cached["found"]]
 
 
-def weak_base(store: Store, now: int) -> list[Alert]:
+def weak_base(store: Store, _now: int) -> list[Alert]:
     return [Alert(f"once:weakbase:{i}", DIGEST, "weak_base_did", wid,
                   f"{summary}. A number with a weak base is not a probe casualty; it will stay at low share. Look: "
                   f"`python -m controller view --workflow {wid}` (DID probes).")
             for i, wid, summary in _rows(store, "SELECT id, workflow_id, summary FROM decisions WHERE kind='did_weak_base'")]
 
 
-def _hour_rates(store: Store, wid: str, lo: int, hi: int) -> dict[int, tuple[int, int, int, int]]:
-    return {r.key[0]: (r.dials, r.connects, r.engaged, 0) for r in cube.rollup(store, wid, by=("hour",), day_min=lo, day_max=hi)}
+def _hour_rates(store: Store, wid: str, lo: int, hi: int) -> dict[int, tuple[int, int, int]]:
+    return {r.key[0]: (r.dials, r.connects, r.engaged) for r in cube.rollup(store, wid, by=("hour",), day_min=lo, day_max=hi)}
 
 
 def drift_z(store: Store, wid: str, day: int, kpi: str) -> tuple[float, float, float] | None:
     """(z, observed, expected) of ``day`` against the trailing three days at the same hours (hour-adjusted)."""
     base, cur = _hour_rates(store, wid, day - 3, day - 1), _hour_rates(store, wid, day, day)
     obs = exp = var = 0.0
-    for hour, (dials, connects, engaged, _) in cur.items():
+    for hour, (dials, connects, engaged) in cur.items():
         b = base.get(hour)
         if not b:
             continue

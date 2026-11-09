@@ -196,3 +196,21 @@ def test_client_counts_local_error_statuses(client):
     with _pytest.raises(NotFound):
         client.get_config("no_such_workflow")
     assert client.counters.get("4xx") == 1 and "5xx" not in client.counters
+
+
+import pytest  # noqa: E402
+
+
+@pytest.mark.parametrize("reason, hygiene", [
+    ("change_summary, diff, dry_run and rationale must all be non-empty", True),
+    ("affected_leads must be a non-negative integer", True),
+    ("impact_score must be in [0,1]", True),
+    ("prompt changes need evidence.validation_run_id for this workflow and prompt", True),
+    ("validation pass rate 0.500 below 0.8", True),
+    ("approver fatigue: more than 3 requests in 24h for this workflow - batch your changes", True),
+    ("approver declined (judgement call)", False),
+    ("", False),
+    (None, False),
+])
+def test_is_hygiene_reason_classifies_every_known_sim_reason(reason, hygiene):
+    assert alerts.is_hygiene_reason(reason) is hygiene

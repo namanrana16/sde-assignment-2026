@@ -8,7 +8,6 @@ from __future__ import annotations
 import json
 import logging
 import re
-from typing import Any
 
 from . import settings
 from .client import OutcomeUnknown, SimClient
@@ -37,12 +36,6 @@ def open_incidents(store: Store, wid: str, kind: str | None = None) -> list[dict
            " WHERE workflow_id=? AND state=?" + (" AND kind=?" if kind else "") + " ORDER BY id")
     args: tuple = (wid, OPEN) + ((kind,) if kind else ())
     return [_row(r) for r in store.conn.execute(sql, args).fetchall()]
-
-
-def all_incidents(store: Store, wid: str, kind: str) -> list[dict]:
-    return [_row(r) for r in store.conn.execute(
-        "SELECT id, workflow_id, kind, state, opened_minute, closed_minute, body FROM incidents"
-        " WHERE workflow_id=? AND kind=? ORDER BY id", (wid, kind)).fetchall()]
 
 
 def update_incident(store: Store, incident_id: int, body: dict) -> None:
@@ -113,14 +106,14 @@ def validation_cost(n: int) -> float:
 _RUN_ID = re.compile(r'"validation_run_id"\s*:\s*"([^"]+)"')
 
 
-def validation_for(store: Store, wid: str, prompt: str, min_pass: float | None = None) -> dict | None:
+def validation_for(store: Store, wid: str, prompt: str) -> dict | None:
     """Best (highest pass rate, newest) stored validation of this workflow's prompt."""
     rows = store.conn.execute("SELECT run_id, n, pass_rate, sim_minute FROM validation_runs WHERE workflow_id=?"
                               " AND prompt_version=? ORDER BY pass_rate DESC, sim_minute DESC", (wid, prompt)).fetchall()
-    for run_id, n, rate, minute in rows:
-        if min_pass is None or rate >= min_pass:
-            return {"run_id": run_id, "n": n, "pass_rate": rate, "sim_minute": minute}
-    return None
+    if not rows:
+        return None
+    run_id, n, rate, minute = rows[0]
+    return {"run_id": run_id, "n": n, "pass_rate": rate, "sim_minute": minute}
 
 
 def validations_of(store: Store, wid: str, prompt: str) -> list[dict]:

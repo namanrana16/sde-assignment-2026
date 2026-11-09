@@ -24,7 +24,7 @@ def draft(**kw):
     base = dict(workflow_id="nw_renewal", kind="daily_bundle", base_version=1, proposed_config=CFG,
                 dims=("schedule",), max_shift=0.0, tv={}, change_summary="s", diff={"a": 1},
                 affected_leads=10, dry_run={"m": 1}, impact_score=0.5, rationale="r",
-                evidence={}, expires_in_hours=None)
+                evidence={})
     base.update(kw)
     return ProposalDraft(**base)
 

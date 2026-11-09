@@ -35,7 +35,6 @@ class ProposalDraft:
     impact_score: float
     rationale: str
     evidence: dict = field(default_factory=dict)
-    expires_in_hours: float | None = None
 
     def approval_body(self, proposal_id: str) -> dict:
         body = {"proposal_id": proposal_id, "workflow_id": self.workflow_id,
@@ -45,8 +44,6 @@ class ProposalDraft:
                 "impact_score": self.impact_score, "rationale": self.rationale}
         if self.evidence:
             body["evidence"] = self.evidence
-        if self.expires_in_hours is not None:
-            body["expires_in_hours"] = self.expires_in_hours
         return body
 
     def auto_body(self, proposal_id: str) -> dict:
@@ -121,8 +118,7 @@ def _rationale(changes: Sequence[DesiredChange]) -> str:
 
 
 def build_draft(store, vocab: FeatureVocab, wf: Mapping, version: int, current: Mapping,
-                changes: Sequence[DesiredChange], now: int,
-                expires_in_hours: float | None = None) -> ProposalDraft:
+                changes: Sequence[DesiredChange], now: int) -> ProposalDraft:
     """Merge the changes (least urgent first, so the most urgent wins) into a FULL config."""
     cfg = dict(current)
     for change in sorted(changes, key=lambda c: -c.priority):
@@ -145,4 +141,4 @@ def build_draft(store, vocab: FeatureVocab, wf: Mapping, version: int, current: 
         change_summary=_summary(changes, dims), diff=config_diff(current, cfg),
         affected_leads=dryrun.affected_leads(store, vocab, wf, current, cfg, now), dry_run=dry,
         impact_score=dryrun.impact_score(dry, wf["objective"]["primary"], override),
-        rationale=_rationale(changes), evidence=evidence, expires_in_hours=expires_in_hours)
+        rationale=_rationale(changes), evidence=evidence)

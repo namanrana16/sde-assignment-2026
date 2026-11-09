@@ -40,10 +40,12 @@ def test_worst_case_decision_must_precede_expiry():
     ok, why = fatigue.filing_window_ok(at(0, 18), KESTREL, True, "other")
     assert not ok and "expires_at" in why
     assert fatigue.filing_window_ok(at(0, 11), KESTREL, False, "other")[0]
-    # a shortened TTL (expires_in_hours) tightens the rule
-    assert fatigue.filing_window_ok(at(0, 10), RENEWAL, False, "x", expires_in_hours=24)[0]
-    assert not fatigue.filing_window_ok(at(0, 10), RENEWAL, True, "x", expires_in_hours=2)[0]  # best P < routine floor
-    assert fatigue.ttl_minutes(RENEWAL, 100) == 24 * 60  # capped at the policy TTL
+    # a shorter policy TTL tightens the rule
+    short = {**RENEWAL, "proposal_ttl_hours": 2}
+    assert fatigue.filing_window_ok(at(0, 10), RENEWAL, False, "x")[0]
+    assert not fatigue.filing_window_ok(at(0, 10), short, True, "x")[0]  # best P < routine floor
+    assert fatigue.ttl_minutes(RENEWAL) == RENEWAL["proposal_ttl_hours"] * 60
+    assert fatigue.ttl_minutes(short) == 2 * 60
 
 
 def test_soft_cap_not_before_11_is_routine_only_and_from_settings():
@@ -212,8 +214,11 @@ def test_registry_collect_orders_by_priority_and_filters_workflow():
 
 
 def test_job_last_run_is_persisted_in_store(store):
+    from types import SimpleNamespace
+
     from controller.planner import Planner
-    p = Planner(None, store, None)
+    from controller.proposal_repo import ProposalRepo
+    p = Planner(None, store, SimpleNamespace(repo=ProposalRepo(store)))
     assert p.job_due(settings.JOB_DAILY_BUNDLE, "w", at(3, 10))
     p.job_mark(settings.JOB_DAILY_BUNDLE, "w", at(3, 10))
     assert not p.job_due(settings.JOB_DAILY_BUNDLE, "w", at(3, 18))

@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from . import settings
+from .desired import ROUTE_APPROVAL, ROUTE_AUTO  # noqa: F401  ROUTE_AUTO re-exported: governance and tests import it from here
 from .store import Store
 
 DRAFT, INTENT, PENDING, APPROVED, APPLIED = "DRAFT", "INTENT", "PENDING", "APPROVED", "APPLIED"
@@ -18,7 +19,6 @@ STALE, LAPSED, SUPERSEDED, SUBMIT_FAILED, AUTO_APPLIED = (
     "STALE", "LAPSED", "SUPERSEDED", "SUBMIT_FAILED", "AUTO_APPLIED")
 
 TRANSITIONS: dict[str, frozenset[str]] = {
-    DRAFT: frozenset({INTENT}),
     INTENT: frozenset({PENDING, AUTO_APPLIED, STALE, SUBMIT_FAILED, SUPERSEDED}),
     PENDING: frozenset({APPROVED, REJECTED, EXPIRED, STALE, SUPERSEDED}),
     APPROVED: frozenset({APPLIED, STALE, LAPSED, SUPERSEDED}),
@@ -27,8 +27,6 @@ TRANSITIONS: dict[str, frozenset[str]] = {
     MONITORING: frozenset({CLOSED}),
 }
 IN_FLIGHT = (INTENT, PENDING, APPROVED)  # approval-route proposals that block P1
-OPEN = (INTENT, PENDING, APPROVED, APPLIED, AUTO_APPLIED, MONITORING)
-ROUTE_APPROVAL, ROUTE_AUTO = "approval", "auto"
 
 
 class IllegalTransition(RuntimeError):

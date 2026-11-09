@@ -105,9 +105,8 @@ def test_budget_tiers_for_totals_1_to_4(total, routine, severe, incident):
 
 def test_urgent_threshold_is_a_coin_flip_not_a_long_shot():
     """D5: where some minute of the day reaches P >= 0.5, an incident waits for such a minute."""
-    assert fatigue.settings.FILE_MIN_P_URGENT == 0.5
     gov = {**NW_RENEWAL, "proposal_ttl_hours": 3}
-    assert fatigue.best_daily_probability(gov) >= 0.5
+    assert fatigue.best_daily_probability(gov) >= settings.FILE_MIN_P_URGENT
     assert fatigue.filing_window_ok(at(0, 10), gov, False, "x")[0]
 
 

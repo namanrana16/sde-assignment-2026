@@ -22,11 +22,9 @@ from typing import Mapping
 from . import settings
 from .cohorts import VOCAB_META_KEY, FeatureVocab
 from .configlib import ProposalError, apply_patch, changed_dims
-from .desired import DEFAULT_REGISTRY, ROUTE_AUTO, DesiredChange, PlanContext, Priority, Registry
+from .desired import DEFAULT_REGISTRY, ROUTE_APPROVAL, ROUTE_AUTO, DesiredChange, PlanContext, Priority, Registry
 from .governance import Governance
-from .proposal_repo import ROUTE_APPROVAL as ROW_APPROVAL
-from .proposal_repo import ROUTE_AUTO as ROW_AUTO
-from .proposal_repo import SUBMIT_FAILED, ProposalRepo, ProposalRow
+from .proposal_repo import SUBMIT_FAILED, ProposalRow
 from .proposals import ProposalDraft, build_draft
 from .store import Store
 
@@ -47,7 +45,7 @@ class Planner:
         if not (last is None or last // DAY < now // DAY):
             return False
         # a kill between submit and job_mark must not allow a second bundle: the row is the proof
-        return not (name == settings.JOB_DAILY_BUNDLE and ProposalRepo(self.store).routine_bundle_on_day(
+        return not (name == settings.JOB_DAILY_BUNDLE and self.gov.repo.routine_bundle_on_day(
             wid, now // DAY, int(Priority.ROUTINE)))
 
     def job_mark(self, name: str, wid: str, now: int) -> None:
@@ -104,7 +102,7 @@ class Planner:
         if auto:
             row, fallback = self._try_auto(wf, version, current, auto, now)
             if row is not None:
-                return row  # steps are never chained within a tick (A5)
+                return row  # steps are never chained within a tick
             if fallback:
                 approval += auto
         return self._plan_approval(wf, version, current, approval, now) if approval else None
@@ -117,9 +115,9 @@ class Planner:
         draft = self._draft(wf, version, current, changes, now)
         if draft is None:
             return None, False
-        if self.gov.validate(draft, ROW_AUTO):
+        if self.gov.validate(draft, ROUTE_AUTO):
             return None, True  # the policy does not allow it as auto: use the approval path
-        if self.gov.submit_backed_off(wid, draft.kind, ROW_AUTO, now, min(c.priority for c in changes)):
+        if self.gov.submit_backed_off(wid, draft.kind, ROUTE_AUTO, now, min(c.priority for c in changes)):
             return None, True  # an auto 403/422 happened: use the approval route instead (its own backoff applies)
         in_flight = self.gov.in_flight(wid)
         evacuation = any(c.evidence.get("flag_evacuation") for c in changes)
@@ -133,7 +131,7 @@ class Planner:
         if last is not None and now - last < gap:
             self._wait(wid, now, f"auto-apply: at most one step per {gap} min (A5)")
             return None, False
-        row = self.gov.submit(draft, now, route=ROW_AUTO, priority=min(c.priority for c in changes),
+        row = self.gov.submit(draft, now, route=ROUTE_AUTO, priority=min(c.priority for c in changes),
                               wanted=[c.summary for c in changes])
         return row, False
 
@@ -159,7 +157,7 @@ class Planner:
         draft = self._draft(wf, version, current, changes, now)
         if draft is None:
             return None
-        row = self.gov.submit(draft, now, route=ROW_APPROVAL, priority=top, supersedes=supersedes,
+        row = self.gov.submit(draft, now, route=ROUTE_APPROVAL, priority=top, supersedes=supersedes,
                               wanted=[c.summary for c in changes])
         if routine and not in_flight and row is not None and row.state != SUBMIT_FAILED:
             self.job_mark(settings.JOB_DAILY_BUNDLE, wid, now)  # one routine bundle per day

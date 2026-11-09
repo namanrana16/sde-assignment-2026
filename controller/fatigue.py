@@ -1,4 +1,4 @@
-"""Approver fatigue ledger and filing-time rules (CONTEXT P4/P5).
+"""Approver fatigue ledger and filing-time rules.
 
 * The sim counts requests by ``created_at`` over a rolling 24 h, rejected and expired ones
   included. Slot tiers: the LAST slot is reserved for safety incidents (hallucination fix, flagged-DID
@@ -46,13 +46,8 @@ def next_working(t: int, hours: list) -> int:
     return t
 
 
-def ttl_minutes(gov: Mapping, expires_in_hours: float | None = None) -> int:
-    ttl = gov["proposal_ttl_hours"]
-    return int(min(float(expires_in_hours or ttl), ttl) * 60)
-
-
-def worst_case_decision(now: int, gov: Mapping) -> int:
-    return next_working(now + gov["approver_latency_minutes"][1], gov["approver_hours"])
+def ttl_minutes(gov: Mapping) -> int:
+    return int(float(gov["proposal_ttl_hours"]) * 60)
 
 
 @lru_cache(maxsize=4096)
@@ -78,22 +73,20 @@ def apply_window_unreachable(gov: Mapping, tick: int = settings.TICK_MINUTES) ->
     return apply_window_factor(gov, tick) < settings.FILE_MIN_P_URGENT_FLOOR
 
 
-def decision_probability(now: int, gov: Mapping, expires_in_hours: float | None = None,
-                         tick: int = settings.TICK_MINUTES) -> float:
+def decision_probability(now: int, gov: Mapping, tick: int = settings.TICK_MINUTES) -> float:
     """P(decision <= expires_at AND still applicable) for a request filed at ``now``: the sim draws
     latency uniformly on [lo, hi] (inclusive, whole minutes), decides at next_working(now + U) and
     expires it if that is after expires_at; the decision must also be seen within the apply window
     (``apply_window_factor``). The expiry part depends only on the minute of day, so it is cached."""
     lo, hi = sorted(int(x) for x in gov["approver_latency_minutes"])
-    p = _p_cached(now % DAY, ttl_minutes(gov, expires_in_hours), lo, hi, tuple(gov["approver_hours"]))
+    p = _p_cached(now % DAY, ttl_minutes(gov), lo, hi, tuple(gov["approver_hours"]))
     return p * apply_window_factor(gov, tick)
 
 
-def best_daily_probability(gov: Mapping, expires_in_hours: float | None = None,
-                           tick: int = settings.TICK_MINUTES) -> float:
+def best_daily_probability(gov: Mapping, tick: int = settings.TICK_MINUTES) -> float:
     """Highest decision_probability over the in-hours minutes of a day (15-minute grid)."""
     hours = gov["approver_hours"]
-    ps = [decision_probability(m, gov, expires_in_hours, tick) for m in range(0, DAY, 15)
+    ps = [decision_probability(m, gov, tick) for m in range(0, DAY, 15)
           if in_hours(m, hours)]
     return max(ps, default=0.0)
 
@@ -105,22 +98,20 @@ def _best_minutes_need(best: float, normal: float, floor: float) -> float:
     return max(floor, 0.95 * best)
 
 
-def urgent_need(gov: Mapping, expires_in_hours: float | None = None,
-                tick: int = settings.TICK_MINUTES) -> float:
+def urgent_need(gov: Mapping, tick: int = settings.TICK_MINUTES) -> float:
     """P an incident/severe request needs: FILE_MIN_P_URGENT, unless no minute of the day reaches it
     (short ttl, long latency). Then file at the day's best minutes (>= 95% of the best P) if that best
     is at least FILE_MIN_P_URGENT_FLOOR: a likely-expiring request costs a slot and a hygiene count,
     but never filing guarantees the safety fix never lands."""
-    return _best_minutes_need(best_daily_probability(gov, expires_in_hours, tick),
+    return _best_minutes_need(best_daily_probability(gov, tick),
                               settings.FILE_MIN_P_URGENT, settings.FILE_MIN_P_URGENT_FLOOR)
 
 
-def routine_need(gov: Mapping, expires_in_hours: float | None = None,
-                 tick: int = settings.TICK_MINUTES) -> float:
+def routine_need(gov: Mapping, tick: int = settings.TICK_MINUTES) -> float:
     """P a routine request needs: FILE_MIN_P_ROUTINE, unless no minute reaches it. Then the day's best
     minutes if their P is at least FILE_MIN_P_ROUTINE_FLOOR (below it the expected waste, a slot and an
     'expired' hygiene count, exceeds the value of the bundle; see docs/THRESHOLDS.md)."""
-    return _best_minutes_need(best_daily_probability(gov, expires_in_hours, tick),
+    return _best_minutes_need(best_daily_probability(gov, tick),
                               settings.FILE_MIN_P_ROUTINE, settings.FILE_MIN_P_ROUTINE_FLOOR)
 
 
@@ -129,7 +120,7 @@ def soft_cap(workflow_id: str, tenant_id: str | None = None) -> dict:
     return settings.SOFT_CAPS.get(workflow_id) or settings.SOFT_CAPS_BY_TENANT.get(tenant_id or "") or {}
 
 
-def soft_cap_ignored(gov: Mapping, workflow_id: str, expires_in_hours: float | None = None,
+def soft_cap_ignored(gov: Mapping, workflow_id: str,
                      tenant_id: str | None = None, tick: int = settings.TICK_MINUTES) -> str | None:
     """Why the workflow's soft cap cannot be honoured (``None`` = it can, or there is none)."""
     soft = soft_cap(workflow_id, tenant_id)
@@ -141,8 +132,8 @@ def soft_cap_ignored(gov: Mapping, workflow_id: str, expires_in_hours: float | N
         if nb >= hi:
             return f"not_before_hour {nb} is not before approver close {hi}"
         first = max(nb * 60, lo * 60)
-        need = routine_need(gov, expires_in_hours, tick)
-        if not any(in_hours(m, gov["approver_hours"]) and decision_probability(m, gov, expires_in_hours, tick)
+        need = routine_need(gov, tick)
+        if not any(in_hours(m, gov["approver_hours"]) and decision_probability(m, gov, tick)
                    >= need for m in range(first, hi * 60)):
             return f"no filing minute at or after {nb}:00 passes the expiry rule"
     if soft.get("max_per_day") is not None and soft["max_per_day"] < 1:
@@ -151,7 +142,7 @@ def soft_cap_ignored(gov: Mapping, workflow_id: str, expires_in_hours: float | N
 
 
 def filing_window_ok(now: int, gov: Mapping, routine: bool, workflow_id: str,
-                     expires_in_hours: float | None = None, *, tenant_id: str | None = None,
+                     *, tenant_id: str | None = None,
                      tick: int = settings.TICK_MINUTES) -> tuple[bool, str]:
     """May a request be filed right now? Returns ``(ok, reason_if_not)``."""
     if not in_hours(now, gov["approver_hours"]):
@@ -159,10 +150,10 @@ def filing_window_ok(now: int, gov: Mapping, routine: bool, workflow_id: str,
     soft = soft_cap(workflow_id, tenant_id)
     if (routine and soft.get("not_before_hour") is not None
             and now % DAY < soft["not_before_hour"] * 60
-            and soft_cap_ignored(gov, workflow_id, expires_in_hours, tenant_id, tick) is None):
+            and soft_cap_ignored(gov, workflow_id, tenant_id, tick) is None):
         return False, f"soft cap: not before {soft['not_before_hour']}:00"
-    need = routine_need(gov, expires_in_hours, tick) if routine else urgent_need(gov, expires_in_hours, tick)
-    p = decision_probability(now, gov, expires_in_hours, tick)
+    need = routine_need(gov, tick) if routine else urgent_need(gov, tick)
+    p = decision_probability(now, gov, tick)
     if p < need:
         return False, f"P(decision before expires_at)={p:.2f} < {need}"
     return True, ""
