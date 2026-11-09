@@ -5,3 +5,5 @@ __pycache__/
 state/
 reports/*.tmp
 .coverage
+docs/REVIEW_PREP.md
+Deep Review_ Outcome-First Agent Loop Controller.md
