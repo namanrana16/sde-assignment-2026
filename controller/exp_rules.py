@@ -3,13 +3,16 @@
 One *scope* is one population analysed on its own (the whole workflow, or a pre-registered analysis group). For a
 scope the rule has four parts:
 
-* harm check (every 4 h):  z <= -3 with >= 150 connects        -> remove now; z <= -2.5 folds into the daily look;
-* ramp / drop (daily):      point >= control after >=1 day and >=100 connects -> ramp;  whole-experiment z <= -1.5
-                            (<300 connects) or <= -1 (>=300 connects) -> drop, otherwise defer; an arm already ramped
-                            is also dropped at last-24h z <= -1.5 (in-experiment decay check);
-* winner (daily, <= 4 looks): one-sided z against control past a Lan-DeMets O'Brien-Fleming boundary at the arm's own
-                            information fraction, Holm across the dim's arms, AND point lift >= 3%, AND recent-window
-                            lift lower bound > 0, AND pickup non-inferiority within ``max_drop``.
+* harm check (every EXP_HARM_CHECK_MINUTES): z <= EXP_HARM_Z with >= EXP_HARM_MIN_CONNECTS connects -> remove now;
+                            z <= EXP_HARM_Z / 1.2 folds into the daily look;
+* ramp / drop (daily):      point >= control after EXP_RAMP_MIN_DAYS and EXP_RAMP_MIN_CONNECTS -> ramp; whole-experiment
+                            z at ``drop_threshold`` (EXP_DROP_Z_SMALL below EXP_DROP_BIG_N connects, else EXP_DROP_Z) ->
+                            drop, otherwise defer; an arm already ramped is also dropped at last-24h z <=
+                            EXP_RAMPED_DROP_RECENT_Z (in-experiment decay check);
+* winner (daily, <= len(EXP_LOOK_FRACTIONS) looks): one-sided z against control past a Lan-DeMets O'Brien-Fleming
+                            boundary at the arm's own information fraction, Holm across the dim's arms, AND point lift
+                            >= EXP_MIN_POINT_LIFT, AND recent-window lift lower bound > 0, AND pickup non-inferiority
+                            within ``max_drop``.
 """
 from __future__ import annotations
 
@@ -47,7 +50,7 @@ def pair_contrast(d: ArmData, ctl: ArmData, recent: bool = False) -> es.Contrast
 
 def drop_holds(s: Mapping, is_ramped: bool) -> bool:
     """Drop predicate of the decision look: whole-experiment z at the drop bound; an arm already carrying the ramp
-    share (20%: keeping it costs ~3x a 7.5% entry arm) is also dropped when its last-24h z is <= EXP_RAMPED_DROP_RECENT_Z
+    share (EXP_RAMP_SHARE: keeping it costs ~3x an EXP_ENTRY_SHARE arm) is also dropped when its last-24h z is <= EXP_RAMPED_DROP_RECENT_Z
     (the in-experiment decay check)."""
     if not s.get("ok"):
         return False
@@ -57,7 +60,7 @@ def drop_holds(s: Mapping, is_ramped: bool) -> bool:
 
 
 def drop_threshold(n_arm: float) -> float:
-    """Whole-experiment drop bound: a stricter z below EXP_DROP_BIG_N connects (a 7.5% arm costs <= 0.075 |effect|)."""
+    """Whole-experiment drop bound: a stricter z below EXP_DROP_BIG_N connects (an entry-share arm costs at most EXP_ENTRY_SHARE x |effect|)."""
     return settings.EXP_DROP_Z if n_arm >= settings.EXP_DROP_BIG_N else settings.EXP_DROP_Z_SMALL
 
 
@@ -135,7 +138,7 @@ def harm_stops(summary: Mapping[str, dict]) -> dict[str, str]:
             continue
         if s["z"] <= settings.EXP_HARM_Z:
             out[arm] = "now"
-        elif s["z"] <= settings.EXP_HARM_Z / 1.2:  # -2.5
+        elif s["z"] <= settings.EXP_HARM_Z / 1.2:  # the fold bound
             out[arm] = "fold"
     return out
 
@@ -152,8 +155,9 @@ def pickup_guard(data: Mapping[str, ArmData], control: str, arm: str, max_drop: 
 def ramp_blocked(s: Mapping) -> bool:
     """A bad recent window (last 24 h z <= EXP_DROP_Z on >= EXP_RECENT_MIN_CONNECTS) blocks a ramp at the look and at apply.
 
-    The window needs only EXP_RECENT_MIN_CONNECTS: a 7.5% arm sees ~85 connects a day, below the 100 a ramp needs
-    cumulatively, so a threshold of 100 never let a decaying entry arm's recent window count (C5)."""
+    The window needs only EXP_RECENT_MIN_CONNECTS: an entry-share arm sees fewer connects a day than the
+    EXP_RAMP_MIN_CONNECTS a ramp needs cumulatively, so that threshold would never let a decaying entry arm's recent
+    window count."""
     return bool(s.get("ok")) and s["recent_n"] >= settings.EXP_RECENT_MIN_CONNECTS and s.get("recent_z", 0.0) <= settings.EXP_DROP_Z
 
 

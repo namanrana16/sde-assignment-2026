@@ -17,6 +17,7 @@ import logging
 from typing import Mapping
 
 from . import cube, schedule_model as sm, settings
+from .audit import fmt_minute
 from .cohorts import VOCAB_META_KEY, FeatureVocab, assign_cohort, select_partition
 from .desired import DEFAULT_REGISTRY, ROUTE_APPROVAL, ROUTE_AUTO, DesiredChange, PlanContext, Priority
 from .detectors.common import latest_config, load_state, once_alert, save_state
@@ -63,10 +64,6 @@ def _strata_cached(store, wid: str, day: int) -> list:
     store.conn.execute("INSERT OR REPLACE INTO exp_day_cache(workflow_id, day, col, cells, payload) VALUES (?,?,?,?,?)",
                        (wid, day, "strata", "-", json.dumps(rows)))
     return rows
-
-
-def clock(minute: int) -> str:
-    return f"Day {minute // DAY} {minute % DAY // 60:02d}:{minute % 60:02d}"
 
 
 def _guard(wf: Mapping, key: str) -> float:
@@ -197,7 +194,7 @@ def _detect_apply(ctx: PlanContext, wid: str, st: dict, cfg: tuple[int, dict]) -
     minute = _applied_minute(ctx.store, wid, cfg[0], ctx.now)
     st["applied"] = {"minute": minute, "version": cfg[0], "tables": live, "status": MONITORING,
                      "estimate": estimate, "prior_tables": _prior_tables(ctx.store, wid, cfg[0])}
-    ctx.store.add_decision(ctx.now, "schedule_applied", f"per-cohort call times live since {clock(minute)}"
+    ctx.store.add_decision(ctx.now, "schedule_applied", f"per-cohort call times live since {fmt_minute(minute)}"
                            f" (config v{cfg[0]}); verifying hour-mix-adjusted pickup", wid,
                            {"version": cfg[0], "estimate": estimate})
 

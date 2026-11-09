@@ -92,7 +92,7 @@ def free_port() -> int:
         return s.getsockname()[1]
 
 
-def summarise(db: Path, samples: list[tuple], t_ctl_start: float, hist_events: int) -> dict:
+def summarise(db: Path, samples: list[tuple]) -> dict:
     con = sqlite3.connect(f"file:{db.as_posix()}?mode=ro", uri=True)
     m = con.execute("SELECT sim_minute, events_ingested, ingest_wall_s, lag_s, tick_wall_s, step_minutes FROM metrics"
                     " ORDER BY id").fetchall()
@@ -208,7 +208,7 @@ def main() -> int:
             for r in samples:
                 fh.write(",".join(f"{x:.1f}" if isinstance(x, float) else str(x) for x in r) + "\n")
         db = max(state_dir.glob("*.db"), key=lambda p: p.stat().st_mtime)
-        summ = summarise(db, samples, t_ctl, 0)
+        summ = summarise(db, samples)
         summ.update({"controller_rc": ctl.returncode, "controller_wall_s": round(total_wall, 1),
                      "sim_ready_s": round(sim_ready_s, 1), "start_sim_minute": st0["sim_minute"],
                      "end_sim_minute": httpx.get(url + "/sim/state", timeout=30).json()["sim_minute"],

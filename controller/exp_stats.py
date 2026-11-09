@@ -134,6 +134,12 @@ def _norm_sf_vec(x: np.ndarray) -> np.ndarray:
     return np.interp(x, _SF_X, _SF_Y)
 
 
+def _crossing_prob(b: float, t: float, sd: float, grid: np.ndarray, dens: np.ndarray) -> float:
+    """P(B(t) crosses ``b * sqrt(t)`` | no crossing so far), from the density ``dens`` of B(t_prev) on ``grid``."""
+    z = (b * math.sqrt(t) - grid) / sd
+    return float(np.sum(dens * _norm_sf_vec(z)) * _GRID_H)
+
+
 @lru_cache(maxsize=4096)
 def _boundaries(ts: tuple[float, ...], alpha: float) -> tuple[float, ...]:
     """Upper boundaries (z scale) for looks at information fractions ``ts`` (strictly increasing, <= 1)."""
@@ -148,13 +154,10 @@ def _boundaries(ts: tuple[float, ...], alpha: float) -> tuple[float, ...]:
             b_z = _N.inv_cdf(1.0 - inc) if 1e-15 < inc < 1 else (12.0 if inc <= 1e-15 else 0.0)
             nxt = np.exp(-0.5 * (grid / sd) ** 2) / (sd * math.sqrt(2 * math.pi))
         else:
-            def crossing(b: float) -> float:
-                z = (b * math.sqrt(t) - grid) / sd
-                return float(np.sum(dens * _norm_sf_vec(z)) * _GRID_H)
             lo, hi = 0.0, 12.0
             for _ in range(48):
                 mid = 0.5 * (lo + hi)
-                if crossing(mid) > inc:
+                if _crossing_prob(mid, t, sd, grid, dens) > inc:
                     lo = mid
                 else:
                     hi = mid

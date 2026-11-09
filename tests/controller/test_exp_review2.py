@@ -1,4 +1,4 @@
-"""Experiment review round 2: harm-stop weights, auto eligibility, daily-look gate, cohort overrides, edge cases."""
+"""Experiment lifecycle: harm-stop weights, auto eligibility, daily-look gate, cohort overrides, edge cases."""
 import json
 import random
 

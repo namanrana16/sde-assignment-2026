@@ -1,4 +1,6 @@
-"""Review round 5: the CUSUM reference must not carry the winner's curse (selection on a lucky pre-promotion window)."""
+"""The CUSUM reference must not carry the winner's curse (selection on a lucky pre-promotion window)."""
+import pytest
+
 from controller import exp_decay as xd, settings
 
 
@@ -27,11 +29,13 @@ def test_winner_falling_below_the_old_control_alarms():
 
 
 def test_a_reference_below_the_cap_is_untouched():
-    out = xd.cusum(_blocks([1.0] * 5), _reference(1.01))
-    assert out["ref_ratio"] == 1.01
+    below_cap = 1.0 + settings.EXP_CUSUM_REF_CAP_LIFT / 3
+    out = xd.cusum(_blocks([1.0] * 5), _reference(below_cap))
+    assert out["ref_ratio"] == pytest.approx(below_cap, abs=1e-4)
 
 
 def test_first_blocks_reference_is_not_capped():
     # no pre-promotion level: the reference is the winner's own first blocks after promotion, which carry no selection
-    out = xd.cusum(_blocks([1.2] * 3 + [1.2] * 7))
-    assert out["ref_ratio"] == 1.2 and not out["alarm"]
+    above_cap = 1.0 + 4 * settings.EXP_CUSUM_REF_CAP_LIFT
+    out = xd.cusum(_blocks([above_cap] * 10))
+    assert out["ref_ratio"] == pytest.approx(above_cap, abs=1e-4) and not out["alarm"]

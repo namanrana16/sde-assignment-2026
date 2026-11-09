@@ -30,7 +30,7 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from controller import exp_alloc, exp_decay as xd, exp_rules as er, settings  # noqa: E402
+from controller import exp_alloc, exp_data, exp_decay as xd, exp_rules as er, settings  # noqa: E402
 
 DIALS_PER_DAY = 3000
 TICKS_PER_DAY = 6
@@ -82,13 +82,7 @@ class Window:
             pdst[lid] = (a[0] + n, a[1] + x)
 
 
-def _flat(strata: dict) -> dict:
-    out: dict[int, tuple[float, float]] = {}
-    for rows in strata.values():
-        for lid, (n, x) in rows.items():
-            a = out.get(lid, (0.0, 0.0))
-            out[lid] = (a[0] + n, a[1] + x)
-    return out
+_flat = exp_data._flatten
 
 
 def arm_data(cum: Window, recent: deque, arms, stratified: bool) -> dict:
@@ -195,6 +189,8 @@ class Run:
     def _daily_look(self, tick: int) -> None:
         days = (tick + 1) / TICKS_PER_DAY
         winners, main = [], None
+        # Known differences from experiments._daily_look: next_shares here gets no untested/floors; the controller
+        # excludes main.drop from reverts; the controller promotes a group winner with cohort-only weights.
         for scope in self.scopes:
             data = self._data(scope)
             out = er.daily_look(data, CONTROL, self.active, len(self.sc.challengers), self.alpha[scope],
@@ -229,7 +225,7 @@ class Run:
                             "drop": drops, "plan": new_plan}
         self.plan = new_plan
 
-    def _apply_update(self, tick: int) -> None:
+    def _apply_update(self) -> None:
         p = self.pending
         rows = er.summarise(self._data("all"), CONTROL, p["ramp"] + p["drop"])
         if any(er.ramp_vetoed(rows[a]) for a in p["ramp"]) or any(er.drop_vetoed(rows[a], a in self.ramped) for a in p["drop"]):
@@ -277,7 +273,7 @@ class Run:
         self.level = (float(len(flat)), float(sum(flat)), len(flat) * p, len(flat) * p * (1 - p)) \
             if len(flat) >= settings.EXP_CUSUM_BLOCK else None
 
-    def _post_tick(self, rows: dict, tick: int) -> None:
+    def _post_tick(self, rows: dict) -> None:
         self.post_ticks.append({a: rows["all"][a] for a in (self.log["winner"], CONTROL)})
         for x in self.flags[self.log["winner"]][-1][1]:
             self.block[0] += 1
@@ -287,7 +283,7 @@ class Run:
                 self.blocks.append((float(n), float(xe), n * self.p_ref, n * self.p_ref * (1 - self.p_ref)))
                 self.block = [0, 0]
 
-    def _window_data(self, from_tick: int, last_ticks: int | None = None):
+    def _window_data(self, from_tick: int):
         win, rec = Window(), deque(maxlen=TICKS_PER_DAY)
         winner = self.log["winner"]
         for i, per_arm in enumerate(self.post_ticks):
@@ -306,9 +302,7 @@ class Run:
         seq = xd.sequential_alarm(c, self.epoch["ts"])
         self.epoch["ts"] = seq["ts"]
         data_stage = self._window_data(self.stage_start + 1)
-        recent = er.pair_contrast(data_stage[winner], data_stage[CONTROL], recent=True)
-        held = {} if recent is None else {"recent_lift": recent.lift, "recent_holdout_connects": recent.n_c,
-                                          "recent_winner_connects": recent.n_a}
+        held = xd.holdout_from(data_stage[winner], data_stage[CONTROL])
         cus = xd.cusum(self.blocks, self.level)
         roll, _ = xd.decide(cus, held, seq)
         if seq["epoch_done"] and not roll:
@@ -362,13 +356,13 @@ class Run:
             rows = self._tick_data(tick)
             self._ingest(rows)
             if self.phase_name in ("stage1", "stage2", "rolling"):
-                self._post_tick(rows, tick)
+                self._post_tick(rows)
             if self.sc.decay:
                 self._track_exposure(tick)
             p = self.pending
             if p and tick >= p["at"]:
                 if p["kind"] == "update":
-                    self._apply_update(tick)
+                    self._apply_update()
                 elif p["kind"] == "promote":
                     self._apply_promotion(tick)
                 elif p["kind"] == "stage2":
@@ -401,10 +395,6 @@ def simulate(seed: int, sc: Scenario) -> dict:
 def _job(args):
     seed, sc = args
     return simulate(seed, sc)
-
-
-def _ticks(a, b):
-    return None if a is None or b is None else b - a
 
 
 def run(sc: Scenario, runs: int, base_seed: int, pool) -> dict:

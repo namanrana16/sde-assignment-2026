@@ -51,7 +51,7 @@ def test_entry_goes_through_approval_not_auto_apply_even_where_allowed(tmp_path,
         for dim, control in (("welcome_message", "W1"), ("voice", "V1")):
             w = cfg[dim]
             others = {k: v for k, v in w.items() if k != "V1" and k != "W1"}
-            assert all(v == pytest.approx(0.075) for v in others.values()) and sum(others.values()) <= 0.225 + 1e-9
+            assert all(v == pytest.approx(settings.EXP_ENTRY_SHARE) for v in others.values()) and sum(others.values()) <= settings.EXP_MAX_CHALLENGER_TOTAL + 1e-9
         assert entry[0][4]["request"]["dry_run"]["primary_kpi"] == "engagement_rate"
         why = store.conn.execute("select inputs from decisions where kind='experiment_look' limit 1").fetchone()
         assert why is None or "records" in json.loads(why[0])

@@ -5,7 +5,7 @@ import random
 
 import pytest
 
-from controller import exp_decay as xd, exp_state as xs, exp_stats as es, settings
+from controller import exp_decay as xd, exp_rules as er, exp_state as xs, exp_stats as es, settings
 
 
 def blocks(ratios, n=150, p=0.5):
@@ -34,7 +34,7 @@ def test_too_few_blocks_cannot_alarm():
 ENOUGH = {"recent_holdout_connects": 100, "recent_winner_connects": 900, "holdout_connects": 100}
 
 
-def test_cusum_rollback_holds_without_minimum_holdout_sample():  # B2
+def test_cusum_rollback_holds_without_minimum_holdout_sample():
     alarm = {"alarm": True, "S": 5.0, "ref_ratio": 1.0, "last_ratio": 0.9}
     for held in ({"recent_lift": -0.05, "recent_holdout_connects": settings.EXP_ROLLBACK_HOLDOUT_MIN - 1,
                   "recent_winner_connects": 900},
@@ -69,7 +69,7 @@ def test_desired_matching_and_patch_shape():
 def test_pre_promotion_reference_catches_a_decay_that_was_already_under_way():
     # level before promotion 1.10; the winner goes live already decaying, below control (~0.9): relative to its first
     # post blocks nothing changes. (A winner merely back at control level, 1.0, no longer alarms: the reference is capped
-    # at +EXP_CUSUM_REF_CAP_LIFT to remove the winner's-curse inflation, round 5; the sequential route covers it.)
+    # at +EXP_CUSUM_REF_CAP_LIFT to remove the winner's-curse inflation; the sequential route covers it.)
     flat_after = blocks([0.9] * 10)
     assert not xd.cusum(flat_after)["alarm"]
     ref = (600.0, 1.10 * 300, 300.0, 600 * 0.25)  # (n, engaged, expected, variance) over the last 48 h before promotion
@@ -138,3 +138,18 @@ def test_apply_time_lower_bound_uses_the_80_percent_one_sided_bound():
     assert not xd.veto_lower_bound(mild)[0]  # a bare positive point estimate is not enough
     strong = es.contrast(rows(900, 0.6, seed=3), rows(900, 0.5, seed=4, offset=10_000))
     assert xd.veto_lower_bound(strong)[0] and not xd.veto_lower_bound(None)[0]
+
+
+def _arm_data(rate, n=200):
+    rows = {i: (1.0, 1.0 if i < n * rate else 0.0) for i in range(n)}
+    return er.ArmData(rows, rows, {})
+
+
+def test_holdout_view_is_holdout_from_applied_to_the_loaded_windows(monkeypatch):
+    for winner, holdout in ((_arm_data(0.6), _arm_data(0.4)), (er.EMPTY, er.EMPTY)):
+        monkeypatch.setattr(xd.exp_data, "load_arms", lambda *a, **k: {"W": winner, "H": holdout})
+
+        viewed = xd.holdout_view(None, "wf", "voice", "W", "H", 0, 100)
+
+        assert viewed == xd.holdout_from(winner, holdout)
+        assert set(viewed) == set(xd.holdout_from(winner, holdout))

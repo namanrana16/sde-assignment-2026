@@ -1,5 +1,7 @@
-"""Review round 4: decay alarm past t=0.9, zero-engaged arms, Holm family guard."""
+"""Decay alarm past t=0.9, zero-engaged arms, Holm family guard."""
 import math
+
+import pytest
 
 from controller import exp_decay as xd, exp_rules as er, exp_stats as es, settings
 
@@ -9,7 +11,7 @@ def _contrast(t: float, z: float = 0.0, n_c: float = 1e6) -> es.Contrast:
     return es.Contrast(n_c, n_c, 0.5, 0.5, z * se, se, z, 1000)
 
 
-# ---------------------------------------------------------------- B1
+# ---------------------------------------------------------------- sequential decay test across epochs
 def test_final_look_after_an_overshooting_look_is_taken_and_ends_the_epoch():
     ts = [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.93]
     out = xd.sequential_alarm(_contrast(1.0), ts)
@@ -28,13 +30,13 @@ def test_fresh_epoch_takes_looks_again_after_the_final_look():
     assert fresh["look"] and len(fresh["ts"]) == 1 and abs(fresh["ts"][0] - fresh["t"]) < 1e-3 and not fresh["epoch_done"]
 
 
-# ---------------------------------------------------------------- B3
+# ---------------------------------------------------------------- Holm family size
 def test_holm_family_size_is_at_least_the_number_of_arms():
     out = es.holm_order({"a": 3.0, "b": 2.0, "c": 1.0}, 1, 0.09, lambda a, arm: 0.0)
     assert out["a"]["alpha_adj"] == 0.03 and out["c"]["alpha_adj"] == 0.09
 
 
-# ---------------------------------------------------------------- B2
+# ---------------------------------------------------------------- zero-engaged arms
 def _rows(n_leads, rate, offset=0):
     """Engaged rows: ``n_leads`` leads with one connect each, a deterministic ``rate`` share engaged."""
     k = round(n_leads * rate)
@@ -78,14 +80,15 @@ def test_recent_collapse_of_a_ramped_arm_is_recent_dropped():
 def test_an_arm_with_engagement_keeps_its_record_unchanged():
     data = _data(0.5, 0.4)
     s = er.summarise(data, "C", ["A"])["A"]
-    c = es.contrast(data["A"].engaged, data["C"].engaged)
-    assert s["z"] == c.z and s["lift"] == c.lift and s["info"] == c.info and "zero_engaged" not in s
+    assert "zero_engaged" not in s
+    assert s["rate_arm"] == pytest.approx(0.4) and s["rate_ctrl"] == pytest.approx(0.5)  # engaged / connects, by hand
+    assert s["lift"] == pytest.approx(0.4 / 0.5 - 1.0) and s["z"] < 0 < s["info"]
 
 
 def test_every_epoch_ends_once_information_reaches_the_design_value_whatever_the_growth_path():
     """Lifecycle property: for any increasing information path, the epoch reaches epoch_done, never stalls.
 
-    This is the test that would have caught the round-4 stall (looks overshooting 0.1 steps).
+    It guards against a stall when looks overshoot the 0.1 information steps.
     """
     import random
     rng = random.Random(7)

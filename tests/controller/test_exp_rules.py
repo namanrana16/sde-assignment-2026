@@ -27,8 +27,11 @@ def look(data, **kw):
 
 
 def test_alloc_entry_respects_the_cap_and_catalogue_order():
-    assert exp_alloc.entry_shares(["A", "B", "C", "D"]) == {"A": 0.075, "B": 0.075, "C": 0.075}
-    assert exp_alloc.weights("X", {"A": 0.075})["X"] == pytest.approx(0.925)
+    share = settings.EXP_ENTRY_SHARE
+    n_arms = int(settings.EXP_MAX_CHALLENGER_TOTAL / share + 1e-9)
+    names = ["A", "B", "C", "D", "E", "F"]
+    assert exp_alloc.entry_shares(names) == {a: share for a in names[:n_arms]}
+    assert exp_alloc.weights("X", {"A": share})["X"] == pytest.approx(1.0 - share)
 
 
 def test_alloc_ramp_keeps_control_at_least_forty_percent():

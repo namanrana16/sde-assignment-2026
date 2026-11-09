@@ -6,7 +6,7 @@ import re
 from typing import Mapping
 
 from . import cube, settings
-from .cohorts import FeatureVocab, assign_cohort
+from .cohorts import FeatureVocab
 from .detectors.common import load_state, save_state
 from .dryrun import cells_by_cohort
 
@@ -27,10 +27,6 @@ def load(store, wid: str, dim: str) -> dict:
 
 def save(store, wid: str, dim: str, st: Mapping) -> None:
     save_state(store, DETECTOR, key(wid, dim), st)
-
-
-def clock(minute: int) -> str:
-    return f"Day {minute // DAY} {minute % DAY // 60:02d}:{minute % 60:02d}"
 
 
 def eligible(wf: Mapping, dim: str) -> bool:
@@ -125,6 +121,3 @@ def override_cells(store, vocab: FeatureVocab, wid: str, cfg: Mapping, dim: str)
 def cohort_signature(cohorts: list) -> str:
     return json.dumps([(c["id"], c["where"]) for c in cohorts], sort_keys=True)
 
-
-def assign(cohorts: list, vocab: FeatureVocab, cell: int) -> str:
-    return assign_cohort(cohorts, vocab.decode(cell))
