@@ -1,6 +1,6 @@
 # Outcome-First Agent Loop — Submission
 
-**Name:** Naman Rana · **Date:** 2026-11-07 · **Hours actually spent (be honest):** the work was done with parallel AI agents, so wall-clock and effort differ. Wall-clock span of the repository: 2026-11-06 00:50 to 2026-11-07 05:53 IST, about 29 h from the first commit to the last one before this commit (`git log`). Agent effort: about 33 h, an AI estimate from the git history with compressed commit times, not a stopwatch (`docs/TIMELOG.md`). **Human hours: <candidate to confirm>** · **Language / storage:** Python 3.13, SQLite (WAL)
+**Name:** Naman Rana · **Date:** 2026-11-07 · **Hours actually spent (be honest):** the work was done with parallel AI agents, so wall-clock and effort differ. Wall-clock span of the repository: 2026-11-06 00:50 to 2026-11-08 05:53 IST, about 29 h from the first commit to the last one before this commit (`git log`). Agent effort: about 33 h, an AI estimate from the git history with compressed commit times, not a stopwatch (`docs/TIMELOG.md`). **Human hours: <8 Hours>** · **Language / storage:** Python 3.13, SQLite (WAL)
 
 > Most numbers below come from `reports/`; exceptions are marked inline: a few come from `controller/settings.py`, `docs/THRESHOLDS.md` or `docs/CONTEXT.md`, the design-rate arithmetic in section 7 and the constraint table in section 1 are marked "design" or derived from the code, and the dev-run figures in sections 12 and 13 are marked "dev runs, not committed". The source is named next to each.
 
