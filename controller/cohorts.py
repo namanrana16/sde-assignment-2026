@@ -1,8 +1,13 @@
 """Cell encoding and cohort predicate matching (first match wins)."""
 from __future__ import annotations
 
+import itertools
 import json
+import math
+from dataclasses import dataclass, field
 from typing import Mapping, Sequence
+
+from . import settings
 
 FEATURES = ("lang", "city_tier", "age_band", "value_band")
 DEFAULT_COHORT = "default"
@@ -88,11 +93,6 @@ class CohortChecker:
 
 
 # --------------------------------------------------------------------------- C2: data-driven partition
-import itertools
-import math
-from dataclasses import dataclass, field
-
-from . import settings
 
 
 @dataclass(frozen=True)

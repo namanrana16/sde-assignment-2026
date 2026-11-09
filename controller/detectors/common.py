@@ -27,10 +27,6 @@ def save_state(store: Store, detector: str, key: str, value: Any) -> None:
                        (detector, key, json.dumps(value, sort_keys=True)))
 
 
-def credits_remaining(client) -> float:
-    return float(client.credits_remaining())
-
-
 def note_once(store: Store, key: str, now: int) -> bool:
     """True the first time per sim day for ``key`` (same table/format as ``Governance.note_once``)."""
     day = str(now // 1440)

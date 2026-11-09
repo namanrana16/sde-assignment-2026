@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from .client import SimClient
+from .ingest import anchor_epoch
 from .store import Store
 
 log = logging.getLogger(__name__)
@@ -19,16 +20,21 @@ _SAFE = re.compile(r"[^A-Za-z0-9_.-]")
 class WorldId:
     scenario: str
     fingerprint: str
-    anchor_chunk: int | None  # chunk 0 (history or events), if any exist yet
+    anchor_chunk: int | None  # chunk 0 (history or events), if any exist yet; debug-only field (tests read it)
     first_event_id: int | None = None
     until_ts: str | None = None
     line_hash: str | None = None  # hash of chunk 0's first line (history or events chunk)
 
 
+def _short_hash(text: str) -> str:
+    """First 16 hex chars of sha256 (part of the fingerprint, which names the DB file: do not change)."""
+    return hashlib.sha256(text.encode()).hexdigest()[:16]
+
+
 def compute_fingerprint(scenario: str, first_line: str | None, first_event_id: int | None,
                         last_event_id: int | None) -> str:
     """scenario + hash(first line of chunk 0) + its event-id range."""
-    line_hash = hashlib.sha256((first_line or "").encode()).hexdigest()[:16] if first_line else "nohist"
+    line_hash = _short_hash(first_line) if first_line else "nohist"
     raw = f"{scenario}|{line_hash}|{first_event_id}|{last_event_id}"
     return hashlib.sha256(raw.encode()).hexdigest()
 
@@ -42,7 +48,7 @@ def identify_world(client: SimClient) -> WorldId:
         return WorldId(state["scenario"], compute_fingerprint(state["scenario"], None, None, None), None)
     first = min(chunks, key=lambda c: c["chunk"])
     line = client.first_line(first["chunk"])
-    line_hash = hashlib.sha256(line.encode()).hexdigest()[:16] if line else None
+    line_hash = _short_hash(line) if line else None
     if first.get("kind") == "history":
         fp = compute_fingerprint(state["scenario"], line, first["first_event_id"], first["last_event_id"])
     else:
@@ -67,7 +73,7 @@ def regressed(store: Store, state: dict, world: WorldId) -> bool:
     if stored_chunks is not None and state["chunks"] < int(stored_chunks):
         return True
     first_id, until = store.get_meta("chunk0_first_event_id"), store.get_meta("chunk0_until_ts")
-    if first_id not in (None, "") and world.first_event_id is not None             and int(first_id) != world.first_event_id:
+    if first_id not in (None, "") and world.first_event_id is not None and int(first_id) != world.first_event_id:
         return True
     if bool(until) and world.until_ts is not None and until != world.until_ts:
         return True
@@ -106,7 +112,25 @@ def open_world_store(client: SimClient, state_dir: str | Path) -> tuple[Store, W
         store.set_meta("fingerprint", world.fingerprint)
         store.set_meta("scenario", world.scenario)
     note_progress(store, state, world)
+    _anchor_epoch_from_state(store, state)
     return store, world, fresh
+
+
+def _anchor_epoch_from_state(store: Store, state: dict) -> None:
+    """Verify the ts epoch against /sim/state before any chunk is ingested; alert (once per process start) if shifted.
+
+    A state without ``ts`` (an older simulator) keeps the contract epoch: nothing to verify against.
+    """
+    if not state.get("ts"):
+        log.warning("/sim/state has no ts: keeping the contract epoch, unverified")
+        return
+    delta = anchor_epoch(state["ts"], state["sim_minute"])
+    if delta == 0:
+        return
+    msg = (f"sim ts {state['ts']} at sim_minute {state['sim_minute']} is {delta} minutes off the "
+           f"contract epoch; event timestamps re-anchored by {delta} minutes")
+    log.warning(msg)
+    store.add_alert(state["sim_minute"], "warn", "epoch_reanchored", msg)
 
 
 def _archive(path: Path) -> None:

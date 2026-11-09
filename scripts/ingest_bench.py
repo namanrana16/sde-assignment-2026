@@ -3,7 +3,7 @@
 Needs runs/load_before/{state,sim_run} (a finished scripts/load_test.py run copied there). Env: DROP_IDX=1 drops the
 calls_lead index, CKPT=<pages> sets wal_autocheckpoint, any arg turns on cProfile caller output.
 """
-import sys, time, cProfile, pstats, shutil, pathlib, os, sqlite3
+import sys, time, cProfile, pstats, shutil, pathlib, os
 sys.path.insert(0, '.')
 from controller.store import Store
 from controller.ingest import Ingestor

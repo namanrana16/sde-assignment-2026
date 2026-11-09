@@ -42,13 +42,16 @@ def _decision_lines(rows: list[dict], indent: str = "    ", verbose: bool = Fals
     return lines or [f"{indent}(none)"]
 
 
+_NO_APPROVER_NAMES = "; the sim exposes no approver names"
+
+
 def _who(r: dict[str, Any]) -> str:
     v, p = r["version"], r["proposal"]
     wid = r["workflow"]
     if p and p.get("approval"):
         ap = p["approval"]
         return (f"approval {ap['approval_id']} {str(ap['decision']).lower()}, decided_at {ap['decided_at']} by the"
-                f" policy approver of {wid}; the sim exposes no approver names")
+                f" policy approver of {wid}{_NO_APPROVER_NAMES}")
     if p and p["route"] == "auto":
         aa = ((r.get("policy") or {}).get("auto_apply")) or {}
         return (f"auto-applied under policy {aa.get('allowed_dims', '(dims in the workflow policy)')},"
@@ -118,7 +121,7 @@ def _proposal_lines(p: dict, rollback: dict | None, verbose: bool) -> list[str]:
     ap = p.get("approval")
     if ap:
         lines.append(f"    approval {ap['approval_id']}: {ap['decision']} (decided_at {ap['decided_at']},"
-                     f" observed_at {ap['observed_at']}) by {ap['approver']}; the sim exposes no approver names")
+                     f" observed_at {ap['observed_at']}) by {ap['approver']}{_NO_APPROVER_NAMES}")
         pol = ap.get("policy")
         if pol:
             lines.append(f"    policy: approver hours {pol['approver_hours']}, latency {pol['approver_latency_minutes']} min,"

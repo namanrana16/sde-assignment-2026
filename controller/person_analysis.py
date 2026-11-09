@@ -119,8 +119,8 @@ class Posterior:
     data_weight: float  # n / (n + k): the share of the posterior mean that comes from the person's own dials
 
 
-def posterior(prior_mean: float, dials: int, connects: int, strength: float | None = None) -> Posterior:
-    k = settings.PERSON_PRIOR_STRENGTH if strength is None else strength
+def posterior(prior_mean: float, dials: int, connects: int) -> Posterior:
+    k = settings.PERSON_PRIOR_STRENGTH
     p = min(max(prior_mean, 1e-6), 1 - 1e-6)
     a, b = k * p + connects, k * (1 - p) + dials - connects
     return Posterior(a, b, a / (a + b), dials / (dials + k) if dials + k > 0 else 0.0)
@@ -279,9 +279,10 @@ def analyse_workflow(store: Store, wid: str, lo: int, hi: int, total_dials: int)
     edges = block_edges(lo, hi)
     profile = load_profile(store, wid, edges)
     persons = load_persons(store, wid, edges)
-    rows = [a for p in persons if (a := assess(p, profile))]
+    assessed = [(p, a) for p in persons if (a := assess(p, profile))]
+    rows = [a for _, a in assessed]
     summary = summarise(rows, total_dials)
-    summary.update(null_replay([p for p in persons if assess(p, profile)], profile))
+    summary.update(null_replay([p for p, _ in assessed], profile))
     summary.update({"window": [lo, hi], "blocks": [list(e) for e in edges]})
     return summary, rows, profile
 

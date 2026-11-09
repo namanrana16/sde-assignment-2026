@@ -30,7 +30,7 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from controller import exp_alloc, exp_decay as xd, exp_rules as er, settings  # noqa: E402
+from controller import exp_alloc, exp_data, exp_decay as xd, exp_rules as er, settings  # noqa: E402
 
 DIALS_PER_DAY = 3000
 TICKS_PER_DAY = 6
@@ -82,13 +82,7 @@ class Window:
             pdst[lid] = (a[0] + n, a[1] + x)
 
 
-def _flat(strata: dict) -> dict:
-    out: dict[int, tuple[float, float]] = {}
-    for rows in strata.values():
-        for lid, (n, x) in rows.items():
-            a = out.get(lid, (0.0, 0.0))
-            out[lid] = (a[0] + n, a[1] + x)
-    return out
+_flat = exp_data._flatten
 
 
 def arm_data(cum: Window, recent: deque, arms, stratified: bool) -> dict:
@@ -195,6 +189,8 @@ class Run:
     def _daily_look(self, tick: int) -> None:
         days = (tick + 1) / TICKS_PER_DAY
         winners, main = [], None
+        # Known differences from experiments._daily_look: next_shares here gets no untested/floors; the controller
+        # excludes main.drop from reverts; the controller promotes a group winner with cohort-only weights.
         for scope in self.scopes:
             data = self._data(scope)
             out = er.daily_look(data, CONTROL, self.active, len(self.sc.challengers), self.alpha[scope],
@@ -229,7 +225,7 @@ class Run:
                             "drop": drops, "plan": new_plan}
         self.plan = new_plan
 
-    def _apply_update(self, tick: int) -> None:
+    def _apply_update(self) -> None:
         p = self.pending
         rows = er.summarise(self._data("all"), CONTROL, p["ramp"] + p["drop"])
         if any(er.ramp_vetoed(rows[a]) for a in p["ramp"]) or any(er.drop_vetoed(rows[a], a in self.ramped) for a in p["drop"]):
@@ -277,7 +273,7 @@ class Run:
         self.level = (float(len(flat)), float(sum(flat)), len(flat) * p, len(flat) * p * (1 - p)) \
             if len(flat) >= settings.EXP_CUSUM_BLOCK else None
 
-    def _post_tick(self, rows: dict, tick: int) -> None:
+    def _post_tick(self, rows: dict) -> None:
         self.post_ticks.append({a: rows["all"][a] for a in (self.log["winner"], CONTROL)})
         for x in self.flags[self.log["winner"]][-1][1]:
             self.block[0] += 1
@@ -287,7 +283,7 @@ class Run:
                 self.blocks.append((float(n), float(xe), n * self.p_ref, n * self.p_ref * (1 - self.p_ref)))
                 self.block = [0, 0]
 
-    def _window_data(self, from_tick: int, last_ticks: int | None = None):
+    def _window_data(self, from_tick: int):
         win, rec = Window(), deque(maxlen=TICKS_PER_DAY)
         winner = self.log["winner"]
         for i, per_arm in enumerate(self.post_ticks):
@@ -306,8 +302,7 @@ class Run:
         seq = xd.sequential_alarm(c, self.epoch["ts"])
         self.epoch["ts"] = seq["ts"]
         data_stage = self._window_data(self.stage_start + 1)
-        recent = er.pair_contrast(data_stage[winner], data_stage[CONTROL], recent=True)
-        held = {"recent_lift": recent.lift} if recent is not None else {}
+        held = xd.holdout_from(data_stage[winner], data_stage[CONTROL])
         cus = xd.cusum(self.blocks, self.level)
         roll, _ = xd.decide(cus, held, seq)
         if seq["epoch_done"] and not roll:
@@ -361,13 +356,13 @@ class Run:
             rows = self._tick_data(tick)
             self._ingest(rows)
             if self.phase_name in ("stage1", "stage2", "rolling"):
-                self._post_tick(rows, tick)
+                self._post_tick(rows)
             if self.sc.decay:
                 self._track_exposure(tick)
             p = self.pending
             if p and tick >= p["at"]:
                 if p["kind"] == "update":
-                    self._apply_update(tick)
+                    self._apply_update()
                 elif p["kind"] == "promote":
                     self._apply_promotion(tick)
                 elif p["kind"] == "stage2":
@@ -402,10 +397,6 @@ def _job(args):
     return simulate(seed, sc)
 
 
-def _ticks(a, b):
-    return None if a is None or b is None else b - a
-
-
 def run(sc: Scenario, runs: int, base_seed: int, pool) -> dict:
     res = list(pool.map(_job, [(base_seed + i, sc) for i in range(runs)], chunksize=4))
     n = len(res)
@@ -428,6 +419,7 @@ def run(sc: Scenario, runs: int, base_seed: int, pool) -> dict:
         out["share_onset2_le_01"] = float(np.mean([s <= 0.1 for s in sh])) if sh else None
         lat = [r["rolled_back"] - r["stage1"] for r in live if r["rolled_back"] is not None]
         out["median_rb_ticks"] = float(np.median(lat)) if lat else None
+        out["rb_given_live"] = (sum(r["rolled_back"] is not None for r in live) / len(live)) if live else None
     return out
 
 
@@ -447,7 +439,12 @@ def scenarios(latencies=(2.0, 8.0, 20.0)) -> list[tuple[str, Scenario, str]]:
                                          groups=False, latency_h=8.0, rollback="auto", full_pipeline=True), "decay"))
     decay.append(("decay_drift", Scenario("decaying A + drift, approval 8 h, rollback by approval", days=16, decay=True,
                                           drift=True, groups=False, latency_h=8.0, full_pipeline=True), "decay"))
-    return base + decay
+    stable = [("stable15", Scenario("stable winner A +15% (never decays), approval 8 h", {"A": 0.15}, days=16, groups=False,
+                                    latency_h=8.0, full_pipeline=True), "stable")]
+    for lift in (0.05, 0.08):  # appended after stable15 so every earlier row keeps its seed
+        stable.append((f"stable{lift * 100:g}", Scenario(f"stable winner A +{lift:.0%} (never decays), approval 8 h", {"A": lift},
+                                                          days=16, groups=False, latency_h=8.0, full_pipeline=True), "stable"))
+    return base + decay + stable
 
 
 def render(rows: list[dict]) -> list[str]:
@@ -492,6 +489,22 @@ def render(rows: list[dict]) -> list[str]:
         lines.append(f"| {r['label']} | {r['runs']} | {r['stage1']:.1%} | {r['stage2']:.1%} | {r['rolled_back']:.1%} | "
                      f"{f(r['exposure'])} | {f(r['share_onset2'])} | {f(r['share_onset2_le_01'], True)} | "
                      f"{'-' if r['median_rb_ticks'] is None else f'{r['median_rb_ticks']:.0f}'} |")
+    lines += render_stable([x for x in rows if x["kind"] == "stable"])
+    return lines
+
+
+def render_stable(rows: list[dict]) -> list[str]:
+    """False-rollback rate of a promoted winner whose lift stays at its true value (multi-epoch false-alarm rate)."""
+    lines = ["", "## Stable winner (false rollback over the monitoring window)", "",
+             f"A promoted winner whose true lift stays at +15% for the whole 16-day run. The sequential decay test runs "
+             f"at alpha {settings.EXP_DECAY_ALPHA} per epoch and restarts every epoch, so the false-rollback rate over the "
+             "monitoring window is measured here, not assumed: rolled back = the stable winner is removed again within 16 days "
+             "(over runs where it was promoted).", "",
+             "| scenario | runs | promotion (stage 1) | stage 2 | false rollback (of all runs) | false rollback (of promoted) |",
+             "|---|---|---|---|---|---|"]
+    for r in rows:
+        rb = "-" if r["rb_given_live"] is None else f"{r['rb_given_live']:.1%}"
+        lines.append(f"| {r['label']} | {r['runs']} | {r['stage1']:.1%} | {r['stage2']:.1%} | {r['rolled_back']:.1%} | {rb} |")
     return lines
 
 
@@ -505,7 +518,7 @@ def main() -> None:
     rows = []
     with ProcessPoolExecutor() as pool:
         for i, (key, sc, kind) in enumerate(scenarios()):
-            n = ns.runs if key == "null" else (ns.decay_runs if kind == "decay" else ns.power_runs)
+            n = ns.runs if key == "null" else (ns.decay_runs if kind in ("decay", "stable") else ns.power_runs)
             row = run(sc, n, 10_000 * (i + 1), pool)
             row["kind"] = kind
             rows.append(row)

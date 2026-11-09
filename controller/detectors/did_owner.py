@@ -1,10 +1,10 @@
-"""Who last changed an allocation key's caller_id (B1): a supervisor's deliberate allocation is never overridden."""
+"""Who last changed an allocation key's caller_id: a supervisor's deliberate allocation is never overridden."""
 from __future__ import annotations
 
 import json
 from typing import Mapping
 
-from .. import settings
+from ..audit import fmt_minute
 from ..configlib import dist, dist_equal
 
 SUPERVISOR = "supervisor"
@@ -12,10 +12,7 @@ _EPS = 1e-12
 
 
 def clock(minute: int | None) -> str:
-    if minute is None:
-        return "an unknown time"
-    d = settings.MINUTES_PER_DAY
-    return f"Day {minute // d} {minute % d // 60:02d}:{minute % 60:02d}"
+    return "an unknown time" if minute is None else fmt_minute(minute)
 
 
 def _alloc(body: Mapping, key: str) -> dict | None:

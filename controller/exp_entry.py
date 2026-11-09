@@ -12,10 +12,6 @@ log = logging.getLogger(__name__)
 DAY = settings.MINUTES_PER_DAY
 PARAMS_META_KEY = "exp_sim_params"
 POWER_LOOKBACK_DAYS = 3  # recent complete days that give the daily volume of the default-allocation traffic
-# Entry needs every new challenger to be projected to reach EXP_MIN_ARM_CONNECTS_FOR_TEST connects: that is the hard
-# gate of the daily look (``exp_rules.daily_look`` tests no arm below it), so an arm that cannot reach it can never
-# produce a winner decision. (25% of the design information is stricter but depends on the unknown effect size.)
-MIN_PROJECTED_ARM_CONNECTS = settings.EXP_MIN_ARM_CONNECTS_FOR_TEST
 
 
 def sim_params(ctx) -> tuple[int, int | None]:

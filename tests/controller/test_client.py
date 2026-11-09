@@ -135,7 +135,6 @@ def test_wrappers_hit_expected_paths():
     cl = make(handler)
     cl.health()
     cl.workflows()
-    cl.workflow("w")
     cl.get_config("w")
     cl.config_history("w")
     cl.list_approvals("w", "pending")
@@ -145,7 +144,7 @@ def test_wrappers_hit_expected_paths():
     cl.suggest_fixes("w", "p")
     cl.run_validation("w", "P1", 50)
     assert ("PUT", "/workflows/w/config") in seen and ("POST", "/validation/runs") in seen
-    assert len(seen) == 11
+    assert len(seen) == 10
 
 
 def test_first_line_and_chunk_lines():
@@ -156,6 +155,5 @@ def test_first_line_and_chunk_lines():
 
     cl = make(handler)
     assert cl.first_line(9) == '{"a":1}'
-    assert list(cl.iter_chunk_lines(9)) == ['{"a":1}', '{"a":2}']
     with pytest.raises(c.NotFound):
         cl.first_line(1)

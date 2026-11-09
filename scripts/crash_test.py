@@ -233,7 +233,7 @@ def invariants(url: str, state_dir: Path, run_dir: Path, baseline: Path, runner:
     # 4. every proposal terminal/consistent with GET /approvals; every approval known to us
     sim_ap = {a["approval_id"]: a for a in http.get("/approvals").json()}
     problems = []
-    for pid, (state, aid, _v, wid, route) in props.items():
+    for pid, (state, aid, _v, _wid, route) in props.items():
         if state in ("INTENT", "DRAFT"):
             problems.append(f"{pid} stuck in {state}")
         elif route == "auto" or aid is None:

@@ -35,14 +35,20 @@ def two_prop_z(x1: int, n1: int, x2: int, n2: int, alternative: str = "less") ->
     return z, norm_sf(-z) if alternative == "less" else norm_sf(z)
 
 
-def wilson_upper(x: int, n: int, z: float = 1.96) -> float:
-    """Upper Wilson bound of a binomial proportion (used to rank failure rates)."""
-    if n <= 0:
-        return 1.0
+def _wilson_centre_spread(x: int, n: int, z: float) -> tuple[float, float, float]:
+    """(denominator, centre, spread) of the Wilson interval; the bounds are (centre -/+ spread) / denominator."""
     p = x / n
     denom = 1 + z * z / n
     centre = p + z * z / (2 * n)
     spread = z * math.sqrt(p * (1 - p) / n + z * z / (4 * n * n))
+    return denom, centre, spread
+
+
+def wilson_upper(x: int, n: int, z: float = 1.96) -> float:
+    """Upper Wilson bound of a binomial proportion (used to rank failure rates)."""
+    if n <= 0:
+        return 1.0
+    denom, centre, spread = _wilson_centre_spread(x, n, z)
     return min(1.0, (centre + spread) / denom)
 
 
@@ -96,10 +102,7 @@ def wilson_lower(x: int, n: int, z: float = 1.96) -> float:
     """Lower Wilson bound of a binomial proportion."""
     if n <= 0:
         return 0.0
-    p = x / n
-    denom = 1 + z * z / n
-    centre = p + z * z / (2 * n)
-    spread = z * math.sqrt(p * (1 - p) / n + z * z / (4 * n * n))
+    denom, centre, spread = _wilson_centre_spread(x, n, z)
     return max(0.0, (centre - spread) / denom)
 
 

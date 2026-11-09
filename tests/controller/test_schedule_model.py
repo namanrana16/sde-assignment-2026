@@ -1,4 +1,4 @@
-"""B2: per-cohort hour multipliers, weights tables, outcome estimates."""
+"""Per-cohort hour multipliers, weights tables, outcome estimates."""
 import random
 
 from controller import schedule_model as sm

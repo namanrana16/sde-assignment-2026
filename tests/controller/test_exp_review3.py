@@ -1,4 +1,4 @@
-"""Experiment review round 3: incumbents at entry, supervisor edits while pending, same-ingest apply, power check,
+"""Experiment lifecycle: incumbents at entry, supervisor edits while pending, same-ingest apply, power check,
 report-only interactions, sim tick, per-workflow isolation."""
 import json
 

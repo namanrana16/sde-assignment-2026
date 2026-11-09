@@ -1,4 +1,4 @@
-"""Review round 2: schedule apply detection, dry-run campaign age, partition relearn, config guards."""
+"""Schedule apply detection, dry-run campaign age, partition relearn, config guards."""
 import json
 import math
 

@@ -6,6 +6,7 @@ import pytest
 from controller.desired import Registry
 from controller import cube, settings
 from controller.client import AdvanceNotApplied, SimClient
+from controller.cohorts import matches
 from controller.ingest import Ingestor, mirror_configs, ts_to_minute
 from controller.loop import Controller, Windows, choose_step
 from controller.__main__ import main as cli_main
@@ -120,10 +121,10 @@ def test_cube_helpers(ingested, world):
     assert [r.key[0] for r in by_day] == sorted(r.key[0] for r in by_day) and min(r.key[0] for r in by_day) < 0
     tot = cube.totals(store, wid)
     assert tot.dials == sum(r.dials for r in by_day) and 0 < tot.pickup < 1 and tot.engagement is not None
-    assert tot.flag_rate is not None
     v = cube.totals(store, wid, variant={"voice": "no-such"})
     assert v.dials == 0 and v.pickup is None
-    cells = cube.cells_matching(ing.store, ing.vocab, wid, {"lang": ["hi"]})
+    present = [c for (c,) in ing.store.conn.execute("SELECT DISTINCT cell FROM leads WHERE workflow_id=?", (wid,))]
+    cells = [c for c in present if matches({"lang": ["hi"]}, ing.vocab.decode(c))]
     sub = cube.totals(store, wid, cells=cells)
     assert 0 < sub.dials < tot.dials
     assert cube.rollup(store, wid, cells=[]) == []

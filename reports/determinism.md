@@ -68,3 +68,16 @@ Note for graders: the simulator itself is deterministic given a fixed sequence o
 by scripted replays with different hash seeds), so any residual run-to-run difference would have to come from the
 controller. Reproduce: `scripts/det_run.sh a scenarios/public_01_dev.yaml 8721 &` and the same with tag `b`/port 8722,
 then `python scripts/determinism_check.py state/det_a state/det_b --run-a runs/det_a --run-b runs/det_b --baseline runs/base_public_01_dev`.
+
+## Re-verified at the round-5 code (commit ef1b278)
+
+Two clean concurrent `public_01_dev` runs (`scripts/det_run.sh r5a|r5b scenarios/public_01_dev.yaml 8791|8792`, random `PYTHONHASHSEED`s), compared with `python scripts/determinism_check.py state/det_r5a state/det_r5b --run-a runs/det_r5a --run-b runs/det_r5b --baseline runs/base_r4_pub01`:
+
+```
+decisions: A=2545 B=2545 IDENTICAL sha=f0823f28ac69
+proposals: A=24 B=24 IDENTICAL sha=c3039f3f289c
+config_versions: A=25 B=25 IDENTICAL sha=815213388dfc
+alerts: A=3 B=3 IDENTICAL sha=ab03d5454b23
+grade --json: IDENTICAL (14139 bytes)
+RESULT: DETERMINISTIC
+```

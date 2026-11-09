@@ -20,7 +20,6 @@ from typing import Callable, Mapping, Sequence
 from . import settings
 
 Row = tuple  # (cell, hour, attempt_no, campaign_day, dials, connects, engaged)
-POOLED = "*"
 
 
 @dataclass
@@ -66,7 +65,7 @@ def fit(rows: Sequence[Row], assign: Callable[[int], str], hours: Sequence[int])
     by_cohort: dict[str, list[Row]] = defaultdict(list)
     for r in rows:
         by_cohort[assign(r[0])].append(r)
-    pooled, _, _, pooled_eng, pooled_level = _oe(rows, hours)
+    pooled = _oe(rows, hours)[0]
     cohorts = sorted(by_cohort)
     raw = {c: _oe(by_cohort[c], hours) for c in cohorts}
     terms = []

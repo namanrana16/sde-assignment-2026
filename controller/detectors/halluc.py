@@ -13,6 +13,7 @@ import logging
 from typing import Mapping
 
 from .. import settings
+from ..audit import fmt_minute
 from ..credits import call_with_credit_ledger
 from ..client import OutcomeUnknown, SimUnavailable
 from ..desired import DEFAULT_REGISTRY, ROUTE_APPROVAL, DesiredChange, PlanContext, Priority
@@ -21,15 +22,11 @@ from ..incidents import (can_spend, close_incident, daily_cap_ok, initial_credit
                          validations_of)
 from ..stats import non_inferior, p_text, rate_greater_test, wilson_lower, wilson_upper
 from . import halluc_data as hd
-from .common import latest_config, load_state, note_once, once_alert, save_state
+from .common import latest_config, note_once, once_alert
 
 log = logging.getLogger(__name__)
 KIND = "halluc"
 _RECOVERED: set[str] = set()
-
-
-def clock(minute: int) -> str:
-    return f"Day {minute // 1440} {minute % 1440 // 60:02d}:{minute % 60:02d}"
 
 
 def _rate(c: list) -> float:
@@ -40,13 +37,13 @@ def _wf_min_pass(wf: Mapping) -> float:
     return float(wf["governance"]["min_validation_pass_rate"])
 
 
-def _max_engagement_drop(wf: Mapping) -> float:
+def max_engagement_drop(wf: Mapping) -> float:
     guard = (wf.get("objective") or {}).get("guardrail") or {}
     return float(guard.get("engagement_rate_max_drop", settings.ENGAGEMENT_VERIFY_MAX_DROP))
 
 
 # ------------------------------------------------------------------ the statistical test
-def _ceiling(wf: Mapping) -> float:
+def ceiling(wf: Mapping) -> float:
     """Highest flag rate the workflow's own governance accepts: a fix needs validation pass >= min_pass."""
     return 1.0 - _wf_min_pass(wf)
 
@@ -55,7 +52,7 @@ def _effective_ceiling(wf: Mapping, base: list | None) -> float:
     """Absolute flag-rate ceiling: the governance bar (1 - min_pass), but never below what the last known-good
     prompt's own measured flag rate (detector false positives included) plus its sampling margin says is healthy.
     With no trusted baseline (cold start) it is the governance bar alone."""
-    floor = _ceiling(wf)
+    floor = ceiling(wf)
     if base is None or base[0] < settings.HALLUC_BASELINE_MIN_CONNECTS:
         return floor
     return max(floor, wilson_upper(base[1], base[0], settings.Z_ONE_SIDED_P001))
@@ -64,19 +61,16 @@ def _effective_ceiling(wf: Mapping, base: list | None) -> float:
 def segment_test(seg: list, base: list, alpha: float = settings.HALLUC_P) -> dict:
     """Is the prompt's flag rate above the baseline's? Exact Fisher for small counts, pooled z otherwise."""
     p = rate_greater_test(seg[1], seg[0], base[1], base[0])
-    seg_adh = seg[2] / seg[0] if seg[0] else 0.0
-    base_adh = base[2] / base[0] if base[0] else 0.0
     triggered = seg[0] >= settings.HALLUC_MIN_CONNECTS and p < alpha
     return {"n": seg[0], "flags": seg[1], "rate": _rate(seg), "rate_lb": round(wilson_lower(seg[1], seg[0], 3.09), 5),
-            "base_n": base[0], "base_rate": _rate(base), "p": p, "adherence_drop": round(base_adh - seg_adh, 4),
-            "triggered": triggered}
+            "base_n": base[0], "base_rate": _rate(base), "p": p, "triggered": triggered}
 
 
 def ceiling_test(seg: list, ceiling: float) -> dict:
     """Baseline-free: the flag-rate lower bound (one-sided p<0.001) is above the governance ceiling."""
     lb = wilson_lower(seg[1], seg[0], settings.Z_ONE_SIDED_P001)
     return {"n": seg[0], "flags": seg[1], "rate": _rate(seg), "rate_lb": round(lb, 5), "base_n": 0,
-            "base_rate": ceiling, "p": 0.0, "adherence_drop": 0.0,
+            "base_rate": ceiling, "p": 0.0,
             "triggered": seg[0] >= settings.HALLUC_MIN_CONNECTS and lb > ceiling}
 
 
@@ -84,7 +78,7 @@ def engagement_ok(seg: list, base: list, max_drop: float) -> tuple[bool, dict]:
     """Engagement not significantly below (baseline - guardrail margin)."""
     if not seg[0] or not base[0]:
         return True, {}
-    e_new, e_base = seg[3] / seg[0], base[3] / base[0]
+    e_new, e_base = seg[2] / seg[0], base[2] / base[0]
     se = (e_new * (1 - e_new) / seg[0] + e_base * (1 - e_base) / base[0]) ** 0.5
     ok = (e_new - e_base) + 1.645 * se >= -max_drop
     return ok, {"engagement": round(e_new, 4), "base_engagement": round(e_base, 4), "max_drop": max_drop}
@@ -263,7 +257,8 @@ def prepare_fix(ctx: PlanContext, wid: str, body: dict, st: Mapping, live: str, 
     """Fill ``body['candidates']`` / ``body['target']``: revert first; LLM only if none exists."""
     min_pass = _wf_min_pass(ctx.workflows[wid])
     tried = set(body["tried"])
-    if not any(c["prompt"] not in tried and c["prompt"] != live for c in body["candidates"])             and _bar_unreachable(ctx, wid, body, min_pass):
+    has_untried = _has_untried_candidate(body, live, tried)
+    if not has_untried and _bar_unreachable(ctx, wid, body, min_pass):
         body["target"] = None
         if note_once(ctx.store, f"bar_unreachable:{wid}", ctx.now):
             ctx.store.add_decision(ctx.now, "prompt_bar_unreachable",
@@ -272,19 +267,23 @@ def prepare_fix(ctx: PlanContext, wid: str, body: dict, st: Mapping, live: str, 
         once_alert(ctx.store, ctx.now, "error", "prompt_bar_unreachable",
                    f"no catalog prompt reaches the {min_pass:.3f} validation bar; incident stays open", wid)
         return
-    has_untried = any(c["prompt"] not in tried and c["prompt"] != live for c in body["candidates"])
     if not has_untried and (not body["reverts_checked"] or body.get("scanned_tried", 0) < len(tried)):
         body["reverts_checked"], body["scanned_tried"] = True, len(tried)
         _scan_known_good(ctx, wid, body, st, live, tried, min_pass)
     if body.get("pending_suggestions"):  # a crash left paid suggestions unvalidated: finish them, never re-pay
         _validate_suggestions(ctx, wid, body, live, min_pass)
-    if not any(c["prompt"] not in tried and c["prompt"] != live for c in body["candidates"]) \
+    # recomputed: the scan / validation above can add candidates
+    if not _has_untried_candidate(body, live, tried) \
             and not body["suggested"] and _has_untried_option(ctx.workflows[wid], live, tried):
         _suggest(ctx, wid, body, live, min_pass, persist)
     options = [c for c in body["candidates"] if c["prompt"] not in tried and c["prompt"] != live]
     body["target"] = options[0]["prompt"] if options else None
     if body["target"] is None:
         once_alert(ctx.store, ctx.now, "error", "no_prompt_fix", "no validated fix available; incident stays open", wid)
+
+
+def _has_untried_candidate(body: Mapping, live: str, tried) -> bool:
+    return any(c["prompt"] not in tried and c["prompt"] != live for c in body["candidates"])
 
 
 def _has_untried_option(wf: Mapping, live: str, tried) -> bool:
@@ -300,6 +299,10 @@ def _suggest(ctx: PlanContext, wid: str, body: dict, live: str, min_pass: float,
     s = body["stats"]
     problem = (f"Hallucination flag rate {s.get('rate', 0):.1%} on prompt {live} "
                f"(baseline {s.get('base_rate', 0):.1%}, n={s.get('n', 0)}); need a safe replacement")
+    try:
+        balance_before = ctx.client.credits_remaining()  # read BEFORE marking: a failed read pays nothing
+    except (OutcomeUnknown, SimUnavailable):
+        return  # nothing marked, nothing paid: the next tick tries again
     body["suggested"] = True
     body["credits_spent"] += settings.SUGGEST_FIXES_COST
     if persist:
@@ -308,6 +311,9 @@ def _suggest(ctx: PlanContext, wid: str, body: dict, live: str, min_pass: float,
         resp = call_with_credit_ledger(ctx.client, ctx.store, wid, ctx.now, "suggest-fixes",
                                        ctx.client.suggest_fixes, wid, problem)
     except (OutcomeUnknown, SimUnavailable):
+        _handle_lost_suggest(ctx, wid, body, balance_before)
+        if persist:
+            persist()
         return
     body["pending_suggestions"] = [sug["prompt_version"] for sug in resp.get("suggestions", [])]
     if persist:
@@ -315,6 +321,24 @@ def _suggest(ctx: PlanContext, wid: str, body: dict, live: str, min_pass: float,
     _validate_suggestions(ctx, wid, body, live, min_pass)
     if persist:
         persist()
+
+
+def _handle_lost_suggest(ctx: PlanContext, wid: str, body: dict, balance_before: float) -> None:
+    """The paid call's answer never arrived. Not charged: allow ONE retry on a later tick. Charged (or unknowable):
+    never pay twice; record that the suggestions were paid but lost."""
+    try:
+        charged = round(balance_before - ctx.client.credits_remaining(), 4) > 0
+    except (OutcomeUnknown, SimUnavailable):
+        charged = True  # cannot tell: assume it was paid
+    if not charged and not body.get("suggest_retry_used"):  # provably unpaid; one retry only
+        body["suggested"], body["suggest_retry_used"] = False, True
+        body["credits_spent"] -= settings.SUGGEST_FIXES_COST
+        ctx.store.add_decision(ctx.now, "suggest_fixes_retry", "suggest-fixes outcome unknown but no credits charged;"
+                               " asking once more on a later tick", wid, {"retry": True})
+        return
+    if charged:
+        ctx.store.add_decision(ctx.now, "suggestions_paid_but_lost", "suggest-fixes was charged but the answer was lost;"
+                               " not paying again for this incident", wid, {"credits": settings.SUGGEST_FIXES_COST})
 
 
 def _validate_suggestions(ctx: PlanContext, wid: str, body: dict, live: str, min_pass: float) -> None:
@@ -403,7 +427,7 @@ def _detect_day0(ctx, wid: str, st: dict, live: str) -> bool:
             ctx.store.add_decision(ctx.now, "day0_inconclusive", f"{live}: one borderline validation failure "
                                    f"({verdict['flags']}/{verdict['n']}); confirming and monitoring", wid, verdict)
         return False
-    test = {**verdict, "base_n": 0, "base_rate": 0.0, "p": 0.0, "adherence_drop": 0.0, "triggered": True,
+    test = {**verdict, "base_n": 0, "base_rate": 0.0, "p": 0.0, "triggered": True,
             "validation_pass_rate": 1 - verdict["rate"],
             "evidence": "definite" if verdict["definite"] else "confirmed" if verdict["confirmed"] else "production"}
     _open(ctx, wid, st, live, None, test, "bad_prompt_day0")
@@ -475,20 +499,20 @@ def _verify(ctx: PlanContext, wid: str, inc: dict, st: dict, live: str) -> None:
     if new[0] < settings.HALLUC_VERIFY_MIN_CONNECTS:
         return
     wf = ctx.workflows[wid]
-    margin = _ceiling(wf) * settings.HALLUC_FLAG_MARGIN_FRACTION
+    margin = ceiling(wf) * settings.HALLUC_FLAG_MARGIN_FRACTION
     base_prompt = body.get("baseline_prompt")
     eng_ok, eng, p = True, {}, 0.0
     if base_prompt is None:  # absolute incident: the fix must sit under the governance ceiling
         flags_ok = wilson_upper(new[1], new[0], 1.645) <= _effective_ceiling(wf, _baseline(st, live, ctx.now)[0])
         bad_counts = hd.total_counts(st, body["bad_prompt"])
         if bad_counts[0] >= settings.HALLUC_BASELINE_MIN_CONNECTS:  # too few connects: engagement stays unchecked
-            eng_ok, eng = engagement_ok(new, bad_counts, _max_engagement_drop(wf))
+            eng_ok, eng = engagement_ok(new, bad_counts, max_engagement_drop(wf))
     else:
         base_counts = st["base"] if (base_prompt == st["first_prompt"] and st["base_frozen"]) \
             else hd.total_counts(st, base_prompt)
         flags_ok = non_inferior(new[1], new[0], base_counts[1], base_counts[0], margin)
         p = rate_greater_test(new[1], new[0], base_counts[1], base_counts[0])
-        eng_ok, eng = engagement_ok(new, base_counts, _max_engagement_drop(wf))
+        eng_ok, eng = engagement_ok(new, base_counts, max_engagement_drop(wf))
     info = {"prompt": live, "n": new[0], "flag_rate": round(_rate(new), 5), "p": p, "margin": round(margin, 5),
             "flags_ok": flags_ok, "engagement_ok": eng_ok, "engagement_compared": bool(eng), **eng}
     significantly_worse = base_prompt is not None and p < settings.HALLUC_VERIFY_P
@@ -556,7 +580,7 @@ def _describe_edit(edit: Mapping) -> str:
     if not edit:
         return "live prompt"
     who = edit.get("actor") or "unknown actor"
-    return f"set by {who} {clock(edit['minute'])}" if edit.get("minute") is not None else f"set by {who}"
+    return f"set by {who} {fmt_minute(edit['minute'])}" if edit.get("minute") is not None else f"set by {who}"
 
 
 def halluc_producer(ctx: PlanContext, wid: str) -> list[DesiredChange]:
@@ -582,7 +606,7 @@ def halluc_producer(ctx: PlanContext, wid: str) -> list[DesiredChange]:
         summary += (f": flags {s['rate']:.1%} vs {base} (n={s['n']}, {p_text(s['p'])}); "
                     f"validation {cand['validation_run_id']} pass {cand['pass_rate']:.3f}")
         excess = max(s["rate"] - s["base_rate"], 0.0)
-        evidence = {"validation_run_id": cand["validation_run_id"], "impact_override": min(1.0, excess / max(_ceiling(ctx.workflows[wid]), 1e-9)),
+        evidence = {"validation_run_id": cand["validation_run_id"], "impact_override": min(1.0, excess / max(ceiling(ctx.workflows[wid]), 1e-9)),
                     "rationale": summary + f". Fix source: {cand['source']}; engagement is verified after apply."}
         out.append(DesiredChange(wid, "halluc_fix", Priority.INCIDENT, {"prompt_version": target},
                                  ROUTE_APPROVAL, evidence, summary))

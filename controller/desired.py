@@ -17,7 +17,7 @@ from typing import Any, Callable, Iterable
 
 
 class Priority(IntEnum):
-    """Lower value = more urgent (CONTEXT P2: incident > severe harm-stop/rollback > daily bundle)."""
+    """Lower value = more urgent (incident > severe harm-stop/rollback > daily bundle)."""
 
     INCIDENT = 0
     SEVERE = 1

@@ -23,7 +23,7 @@ def _day0_body(**over):
 
 def _day0_state(p3_counts):
     st = hd.fresh_state()
-    hd._apply_group(st, "P2", -10, [400, 30, 360.0, 200], -600, -500)  # bad prompt: 50% engagement
+    hd._apply_group(st, "P2", -10, [400, 30, 200], -600, -500)  # bad prompt: 50% engagement
     hd._apply_group(st, "P3", 100, p3_counts, 5940, 6000)
     return st
 
@@ -32,7 +32,7 @@ def _day0_state(p3_counts):
 def test_absolute_incident_rejects_a_safe_but_engagement_killing_fix(store):
     body = _day0_body()
     inc = _inc(store, body)
-    st = _day0_state([500, 3, 460.0, 200])  # 40% engaged vs the bad prompt's 50%
+    st = _day0_state([500, 3, 200])  # 40% engaged vs the bad prompt's 50%
     hl._verify(ctx_for(store, FakeClient(), now=6000), "w", inc, st, "P3")
     assert body["tried"] == ["P3"]
     assert store.conn.execute("select count(*) from decisions where kind='incident_verify_failed'").fetchone()[0] == 1
@@ -42,7 +42,7 @@ def test_absolute_incident_rejects_a_safe_but_engagement_killing_fix(store):
 def test_absolute_incident_closes_when_engagement_holds(store):
     body = _day0_body()
     inc = _inc(store, body)
-    hl._verify(ctx_for(store, FakeClient(), now=6000), "w", inc, _day0_state([500, 3, 460.0, 240]), "P3")
+    hl._verify(ctx_for(store, FakeClient(), now=6000), "w", inc, _day0_state([500, 3, 240]), "P3")
     assert store.conn.execute("select state from incidents").fetchone()[0] == "closed"
 
 
@@ -50,7 +50,7 @@ def test_absolute_incident_without_comparable_engagement_records_it(store):
     body = _day0_body()
     inc = _inc(store, body)
     st = hd.fresh_state()
-    hd._apply_group(st, "P3", 100, [500, 3, 460.0, 200], 5940, 6000)  # bad prompt has no connects at all
+    hd._apply_group(st, "P3", 100, [500, 3, 200], 5940, 6000)  # bad prompt has no connects at all
     hl._verify(ctx_for(store, FakeClient(), now=6000), "w", inc, st, "P3")
     row = store.conn.execute("select inputs from decisions where kind='incident_verified'").fetchone()
     assert row is not None and json.loads(row[0])["engagement_compared"] is False
@@ -84,7 +84,7 @@ def test_second_known_good_prompt_is_tried_before_paying_for_suggestions(store):
         incidents.store_validation(store, {"validation_run_id": run_id, "workflow_id": "w", "prompt_version": prompt,
                                            "n": 300, "pass_rate": 0.99}, 3, 0)
     st = state_with_known_good()
-    st["prompts"]["P4"] = {"total": [9000, 130, 8000.0, 4500], "hours": {}, "first_ts": -4000, "last_ts": 2000}
+    st["prompts"]["P4"] = {"total": [9000, 130, 4500], "hours": {}, "first_ts": -4000, "last_ts": 2000}
     body = new_body()
     body.update({"reverts_checked": True, "tried": ["P1"], "candidates": [
         {"prompt": "P1", "validation_run_id": "va", "pass_rate": 0.99, "n": 300, "source": "known_good"}]})
@@ -99,7 +99,7 @@ def test_prompt_outside_the_workflow_catalog_is_never_offered(store):
         incidents.store_validation(store, {"validation_run_id": run_id, "workflow_id": "w", "prompt_version": prompt,
                                            "n": 300, "pass_rate": 0.99}, 3, 0)
     st = state_with_known_good()
-    st["prompts"]["P4"] = {"total": [9000, 130, 8000.0, 4500], "hours": {}, "first_ts": -4000, "last_ts": 3500}  # newest
+    st["prompts"]["P4"] = {"total": [9000, 130, 4500], "hours": {}, "first_ts": -4000, "last_ts": 3500}  # newest
     wf = {**WF, "options": {"prompt_version": ["P1", "P2"]}}
     body = new_body()
     hl.prepare_fix(PlanContext(store, client, {"w": wf}, 5000), "w", body, st, "P2")
@@ -129,7 +129,7 @@ def test_one_workflow_failing_does_not_block_the_next(store, monkeypatch):
 # ------------------------------------------------------------------ 5. a known-bad prompt that returns reopens
 def _bad_returns_state(reason):
     st = state_with_known_good()
-    hd._apply_group(st, "P2", 80, [400, 40, 360.0, 200], 4900, 5000)
+    hd._apply_group(st, "P2", 80, [400, 40, 200], 4900, 5000)
     hd.mark_bad(st, "P2", 4000, reason)
     return st
 

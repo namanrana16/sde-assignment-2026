@@ -67,12 +67,12 @@ def test_evacuation_incident_closes_on_observed_share_not_config(store):
     store.store_config_body("w", 1, "controller", {"allocations": {"default": {"caller_id": {"D1": 1.0}}},
                                                    "cohorts": [], "prompt_version": "P1", "schedule": {}})
     inc_id = incidents.open_incident(store, "w", "did_flagged", 10, {"did": "D2"})
-    did._close_evacuated(ctx_at(store, 5000), "w", ev_with({"D1": 0.8, "D2": 0.2}), {})
+    did._close_evacuated(ctx_at(store, 5000), "w", ev_with({"D1": 0.8, "D2": 0.2}))
     assert store.conn.execute("select state from incidents where id=?", (inc_id,)).fetchone()[0] == "open"
-    did._close_evacuated(ctx_at(store, 5100), "w", ev_with({"D1": 1.0}), {})
+    did._close_evacuated(ctx_at(store, 5100), "w", ev_with({"D1": 1.0}))
     assert store.conn.execute("select state from incidents where id=?", (inc_id,)).fetchone()[0] == "closed"
     inc2 = incidents.open_incident(store, "w", "did_flagged", 10, {"did": "D2"})
-    did._close_evacuated(ctx_at(store, 5200), "w", ev_with({"D1": 1.0}, dials=10), {})  # unknown share: stays open
+    did._close_evacuated(ctx_at(store, 5200), "w", ev_with({"D1": 1.0}, dials=10))  # unknown share: stays open
     assert store.conn.execute("select state from incidents where id=?", (inc2,)).fetchone()[0] == "open"
 
 
@@ -84,13 +84,13 @@ def test_config_share_looks_at_every_allocation_key(store):
 
 def test_flag_expires_after_cooldown_into_a_reprobe(store):
     st = {"flagged": {"D2": {"minute": 100}}, "tested": {"D2": 5}, "reprobe": {}, "weak": {}, "pending": {}}
-    did._expire_flags(ctx_at(store, 100 + settings.DID_FLAG_COOLDOWN_MINUTES - 1), "w", None, st)
+    did._expire_flags(ctx_at(store, 100 + settings.DID_FLAG_COOLDOWN_MINUTES - 1), "w", st)
     assert "D2" in st["flagged"]
-    did._expire_flags(ctx_at(store, 100 + settings.DID_FLAG_COOLDOWN_MINUTES), "w", None, st)
+    did._expire_flags(ctx_at(store, 100 + settings.DID_FLAG_COOLDOWN_MINUTES), "w", st)
     assert "D2" not in st["flagged"] and "D2" not in st["tested"] and "D2" in st["reprobe"]
     open_ = {"flagged": {"D3": {"minute": 0}}, "tested": {}, "reprobe": {}, "weak": {}, "pending": {}}
     incidents.open_incident(store, "w", "did_flagged", 0, {"did": "D3"})
-    did._expire_flags(ctx_at(store, 10 * settings.DID_FLAG_COOLDOWN_MINUTES), "w", None, open_)
+    did._expire_flags(ctx_at(store, 10 * settings.DID_FLAG_COOLDOWN_MINUTES), "w", open_)
     assert "D3" in open_["flagged"]  # still being evacuated: not expired
 
 
@@ -105,7 +105,7 @@ def test_expiry_invalidates_the_tick_memo_so_the_reprobe_window_is_applied(store
     key = (str(store.path), "w")
     did.MEMO[key] = (0, "stale evaluation", {})
     st = {"flagged": {"D2": {"minute": 0}}, "tested": {}, "reprobe": {}, "weak": {}, "pending": {}}
-    did._expire_flags(ctx_at(store, settings.DID_FLAG_COOLDOWN_MINUTES), "w", None, st)
+    did._expire_flags(ctx_at(store, settings.DID_FLAG_COOLDOWN_MINUTES), "w", st)
     assert key not in did.MEMO  # otherwise the producer would judge D2 on its pre-flag history and spread onto it
 
 

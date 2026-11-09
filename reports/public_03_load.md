@@ -83,7 +83,7 @@ Ordered by what hits the 10 min per sim day budget first, with the measurement b
    (cluster-robust variance), so the day cache holds one row per lead and day: it bounds recomputation, not size. `calls` itself
    (7.4M rows, 1.38 GB; 74M rows and about 14 GB per 5 days at 10x) no longer fits the 200 MB page cache, so scans become disk bound.
 3. **Memory.** 1.42 GB peak is reached while ingesting the history chunks at start-up and comes from materialising a whole chunk as parsed dicts (the 54 MB daily morning chunk is the largest steady-state chunk; it was not shown to be the peak). A 10x chunk is
-   about 540 MB of text and tens of GB of dicts: chunks must be streamed (the client already splits `first_line` and `iter_chunk_lines`)
+   about 540 MB of text and tens of GB of dicts: chunks are downloaded whole today; streaming them is the proposed 10x fix
    with the transaction spanning sub-batches only.
 4. **The simulator** (90 to 190 s per sim day, single process, growing with enrolled leads) is not ours to fix but is a third of the
    wall time and would be the next wall at 10x.

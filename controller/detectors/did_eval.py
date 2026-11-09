@@ -8,7 +8,7 @@ from dataclasses import dataclass, field
 from typing import Mapping, Sequence
 
 from .. import settings
-from ..stats import RatioDrop, norm_sf, ratio_drop_test
+from ..stats import RatioDrop, ratio_drop_test
 from .did_data import DidSeries
 from .fatigue_curve import FatigueCurve, decayed_loads
 
@@ -73,11 +73,11 @@ class Evaluation:
     share_dials: int = 0  # dials behind ``shares`` (0: unknown)
 
 
-def _hour_loads(series: DidSeries, curve: FatigueCurve, lo: int, hi: int):
+def hour_loads(series: DidSeries, curve: FatigueCurve, lo: int, hi: int):
     return decayed_loads(series.dials, curve.tau_hours, range(lo, hi + 1))
 
 
-def _mean_h(curve: FatigueCurve, loads: Mapping[int, Mapping[str, float]], series: DidSeries,
+def mean_h(curve: FatigueCurve, loads: Mapping[int, Mapping[str, float]], series: DidSeries,
             dids: Sequence[str], hours: range) -> tuple[float, float, float]:
     """Dial-weighted mean (health, load) of a DID group over hours; plus the dial total."""
     tot = hs = ls = 0.0
@@ -96,7 +96,7 @@ def step_tests(series: DidSeries, curve: FatigueCurve, cur_hour: int, candidates
     """Rolling-window step-drop tests vs the prior day, for each candidate DID, per window length."""
     out: list[StepResult] = []
     lo = cur_hour - max(settings.DID_FLAG_WINDOWS_HOURS) - settings.DID_FLAG_REF_HOURS
-    loads = _hour_loads(series, curve, lo, cur_hour)
+    loads = hour_loads(series, curve, lo, cur_hour)
     for did in candidates:
         peers = [d for d in all_dids if d != did]
         for k in settings.DID_FLAG_WINDOWS_HOURS:
@@ -110,10 +110,10 @@ def step_tests(series: DidSeries, curve: FatigueCurve, cur_hour: int, candidates
             if min(n_w, n_r, np_w, np_r) < m:
                 continue
             xp_w, xp_r = sum(cw.get(p, 0) for p in peers), sum(cr.get(p, 0) for p in peers)
-            hd_w, _, _ = _mean_h(curve, loads, series, [did], win)
-            hp_w, _, _ = _mean_h(curve, loads, series, peers, win)
-            hd_r, _, _ = _mean_h(curve, loads, series, [did], ref)
-            hp_r, _, _ = _mean_h(curve, loads, series, peers, ref)
+            hd_w, _, _ = mean_h(curve, loads, series, [did], win)
+            hp_w, _, _ = mean_h(curve, loads, series, peers, win)
+            hd_r, _, _ = mean_h(curve, loads, series, [did], ref)
+            hp_r, _, _ = mean_h(curve, loads, series, peers, ref)
             expected = (hd_w / hp_w) / (hd_r / hp_r)
             test = ratio_drop_test(cw.get(did, 0), n_w, xp_w, np_w, cr.get(did, 0), n_r, xp_r, np_r, expected)
             share_w, share_r = n_w / (n_w + np_w), n_r / (n_r + np_r)
@@ -136,7 +136,7 @@ def peer_comparison(series: DidSeries, curve: FatigueCurve, did: str, hours: ran
     Per hour: expected pickup = pooled peer pickup x h(L_did) / mean peer h (curve-adjusted).
     """
     x = n_tot = 0
-    exp = var = var_null = 0.0
+    exp = var_null = 0.0
     margin = 1.0 - settings.DID_WEAK_MARGIN
     for h in hours:
         n = series.dials.get(h, {}).get(did, 0)
@@ -154,8 +154,8 @@ def peer_comparison(series: DidSeries, curve: FatigueCurve, did: str, hours: ran
         var_null += n * (pe * margin) * (1 - pe * margin)
     if n_tot == 0 or exp <= 0:
         return None
-    _, l_did, _ = _mean_h(curve, loads, series, [did], hours)
-    _, l_peer, _ = _mean_h(curve, loads, series, list(peers), hours)
+    _, l_did, _ = mean_h(curve, loads, series, [did], hours)
+    _, l_peer, _ = mean_h(curve, loads, series, list(peers), hours)
     z = (x - margin * exp) / math.sqrt(max(var_null, 1e-9))
     return PeerResult(did, n_tot, x, exp, x / exp, z, l_did, l_peer)
 
@@ -182,7 +182,7 @@ def evaluate(series: DidSeries, curve: FatigueCurve, cur_hour: int, options: Seq
     since = since or {}
     long_h = max(settings.DID_WEAK_WINDOW_HOURS, 72)
     span = min(max([long_h] + [cur_hour - v + 1 for v in since.values()]), 240)  # re-probe windows reach back further
-    loads = _hour_loads(series, curve, cur_hour - span - 1, cur_hour + 1)
+    loads = hour_loads(series, curve, cur_hour - span - 1, cur_hour + 1)
     ev = Evaluation(cur_hour, curve, dict(loads.get(cur_hour, {})))
     used = [d for d in options if series.total_dials(d) > 0]
     ev.total_dials = {d: series.total_dials(d) for d in options}
@@ -211,10 +211,3 @@ def evaluate(series: DidSeries, curve: FatigueCurve, cur_hour: int, options: Seq
                     break  # prefer the short window once it has enough data
     return ev
 
-
-def p_value_text(p: float) -> str:
-    return f"{p:.2e}" if 1e-300 <= p < 0.001 else ("<1e-300" if p < 1e-300 else f"{p:.3f}")
-
-
-def z_to_p(z: float) -> float:
-    return norm_sf(-z)

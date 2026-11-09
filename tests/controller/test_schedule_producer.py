@@ -1,4 +1,4 @@
-"""B3: producer routing rules, using persisted state only."""
+"""Producer routing rules, using persisted state only."""
 from types import SimpleNamespace
 
 from controller import schedule

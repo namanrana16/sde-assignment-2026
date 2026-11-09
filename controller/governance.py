@@ -16,10 +16,11 @@ Invariants (R2, R9):
 from __future__ import annotations
 
 import logging
-from typing import Any, Mapping
+from typing import Mapping
 
 from . import client as c
 from . import settings
+from .alerts import is_hygiene_reason
 from .desired import Priority, VetoCrash
 from .fatigue import apply_window_unreachable, filing_window_ok, slot_available, soft_cap_ignored
 from .faults import crash_point
@@ -91,9 +92,8 @@ class Governance:
     def tenant_of(self, wid: str) -> str | None:
         return self.workflows[wid].get("tenant_id")
 
-    def can_file(self, wid: str, now: int, priority: int, expires_in_hours: float | None = None
-                 ) -> tuple[bool, str]:
-        """P4 + P5 for an approval request: budget (reserved last slot) and timing."""
+    def can_file(self, wid: str, now: int, priority: int) -> tuple[bool, str]:
+        """Fatigue budget (reserved last slot) and filing timing for an approval request: budget (reserved last slot) and timing."""
         gov = self.workflows[wid]["governance"]
         tenant, tick = self.tenant_of(wid), self.tick_minutes
         routine = priority == Priority.ROUTINE
@@ -104,10 +104,10 @@ class Governance:
             self.alert(now, "error", "apply_window_unreachable",
                        f"apply window {gov.get('apply_window_hours')} h is too short for a {tick}-min tick: "
                        "an approval would lapse before it can be applied; not filing", wid)
-        ignored = soft_cap_ignored(gov, wid, expires_in_hours, tenant, tick)
+        ignored = soft_cap_ignored(gov, wid, tenant, tick)
         if ignored and routine and self.note_once(f"softcap:{wid}", now):
             self.store.add_decision(now, "soft_cap_ignored", f"soft cap not honoured: {ignored}", wid)
-        return filing_window_ok(now, gov, routine, wid, expires_in_hours, tenant_id=tenant, tick=tick)
+        return filing_window_ok(now, gov, routine, wid, tenant_id=tenant, tick=tick)
 
     def refile_cooldown(self, wid: str, kind: str, now: int) -> str | None:
         """Why this (workflow, kind) must not be refiled yet after repeated rejections, else None.
@@ -174,7 +174,7 @@ class Governance:
                            f"{self._backoff_minutes(route, priority)} sim minutes", wid)
             return None
         if route == ROUTE_APPROVAL:
-            ok, why = self.can_file(wid, now, priority, draft.expires_in_hours)
+            ok, why = self.can_file(wid, now, priority)
             if ok and (cooldown := self.refile_cooldown(wid, draft.kind, now)):
                 ok, why = False, cooldown
             if not ok:
@@ -267,7 +267,7 @@ class Governance:
     def alert_if_graded_reason(self, row: ProposalRow, ap: Mapping, now: int) -> None:
         """A rejection for fatigue or a field problem means OUR accounting/validation is wrong."""
         for reason in ap.get("reasons") or []:
-            if "fatigue" in reason or "must" in reason or "evidence" in reason or "pass rate" in reason:
+            if is_hygiene_reason(reason):
                 self.alert(now, "error", "approver_rejected_for_hygiene",
                            f"{row.proposal_id}: {reason}", row.workflow_id)
 
@@ -367,7 +367,6 @@ class Governance:
         if row.route == ROUTE_APPROVAL:
             ok, why = filing_window_ok(now, self.workflows[wid]["governance"],
                                        row.priority == Priority.ROUTINE, wid,
-                                       row.body["request"].get("expires_in_hours"),
                                        tenant_id=self.tenant_of(wid), tick=self.tick_minutes)
             if not ok:
                 self.repo.transition(row, STALE, now, f"not resent: {why}")

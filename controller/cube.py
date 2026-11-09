@@ -4,7 +4,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Mapping, Sequence
 
-from .cohorts import FeatureVocab, matches
 from .store import Store
 
 GROUP_COLUMNS = ("day", "hour", "cell", "welcome", "voice", "caller_id", "prompt")
@@ -27,17 +26,6 @@ class CubeRow:
     def engagement(self) -> float | None:
         return self.engaged / self.connects if self.connects else None
 
-    @property
-    def flag_rate(self) -> float | None:
-        return self.flags / self.connects if self.connects else None
-
-
-def cells_matching(store: Store, vocab: FeatureVocab, workflow_id: str,
-                   where: Mapping[str, Sequence[str]]) -> list[int]:
-    """Cell codes present for the workflow whose features satisfy a cohort predicate."""
-    rows = store.conn.execute("SELECT DISTINCT cell FROM leads WHERE workflow_id=?",
-                              (workflow_id,)).fetchall()
-    return [c for (c,) in rows if matches(where, vocab.decode(c))]
 
 
 def rollup(store: Store, workflow_id: str, by: Sequence[str] = ("day",),

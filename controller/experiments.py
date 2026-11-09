@@ -18,7 +18,8 @@ import json
 import logging
 from typing import Mapping
 
-from . import exp_alloc, exp_data, exp_decay, exp_entry, exp_interactions, exp_reconcile, exp_stats as es, exp_proposals as prop, exp_rules as er, exp_state as xs, settings
+from . import exp_alloc, exp_data, exp_decay, exp_entry, exp_interactions, exp_reconcile, exp_proposals as prop, exp_rules as er, exp_state as xs, settings
+from .audit import fmt_minute
 from .cohorts import VOCAB_META_KEY, FeatureVocab
 from .desired import DEFAULT_REGISTRY, ROUTE_APPROVAL, ROUTE_AUTO, DesiredChange, PlanContext, Priority
 from .detectors import did_plan
@@ -106,13 +107,13 @@ def _plan_entry(ctx: PlanContext, st: dict, wid: str, dim: str, cfg: tuple[int, 
 def _entry_powered(ctx, st, wid, dim, cfg, new: list) -> bool:
     """False (and re-check tomorrow) when a new challenger cannot be projected to reach a test over the rest of the run."""
     proj = exp_entry.projected_arm_connects(ctx, wid, dim, cfg[1], settings.EXP_ENTRY_SHARE)
-    if proj is None or proj >= exp_entry.MIN_PROJECTED_ARM_CONNECTS:
+    if proj is None or proj >= settings.EXP_MIN_ARM_CONNECTS_FOR_TEST:
         return True
     st["not_before"] = ctx.now + DAY
     ctx.store.add_decision(ctx.now, "experiment_entry_skipped", f"{dim}: no entry, a challenger at {settings.EXP_ENTRY_SHARE:.1%} is "
-                           f"projected to get {proj:.0f} connects over the rest of the run (< {exp_entry.MIN_PROJECTED_ARM_CONNECTS} "
+                           f"projected to get {proj:.0f} connects over the rest of the run (< {settings.EXP_MIN_ARM_CONNECTS_FOR_TEST} "
                            "needed to be tested); re-checking daily", wid,
-                           {"dim": dim, "projected_connects": round(proj, 1), "needed": exp_entry.MIN_PROJECTED_ARM_CONNECTS,
+                           {"dim": dim, "projected_connects": round(proj, 1), "needed": settings.EXP_MIN_ARM_CONNECTS_FOR_TEST,
                             "challengers": new})
     return False
 
@@ -132,7 +133,7 @@ def _on_applied(ctx: PlanContext, st: dict, wid: str, dim: str, minute: int) -> 
             promo["minute"] = minute
     elif d["then"] == xs.CLOSED:
         st["phase"] = xs.CLOSED
-    ctx.store.add_decision(ctx.now, "experiment_applied", f"{d['kind']} for {dim} is live ({xs.clock(minute)}): "
+    ctx.store.add_decision(ctx.now, "experiment_applied", f"{d['kind']} for {dim} is live ({fmt_minute(minute)}): "
                            f"{prop.weights_text(d['weights'])}", wid, {"kind": d["kind"], "phase": st["phase"]})
 
 
@@ -161,14 +162,14 @@ def _interrupt(ctx: PlanContext, st: dict, wid: str, dim: str, cfg, version: int
     new_control = xs.top_option(dist)
     bad = [a for a, v in st["arms"].items() if v["state"] in ("dropped", "harm_stopped")]
     bad += _below_new_control(ctx, st, wid, dim, new_control, bad)
-    note = (f"A client supervisor set {dim} to {new_control} at {xs.clock(minute)} (config v{version}); treating it as "
+    note = (f"A client supervisor set {dim} to {new_control} at {fmt_minute(minute)} (config v{version}); treating it as "
             f"the new control (never re-imposing {st['control']}). ")
     fresh = _new_state(ctx.workflows[wid], dim, cfg, st["excluded"] + bad, note, minute + settings.EXP_SUPERVISOR_COOLDOWN_MINUTES)
     fresh["history"] = st["history"] + [{k: st[k] for k in ("phase", "control", "arms", "shares", "scopes", "promo", "applied")
                                            if k in st} | {"interrupted_minute": minute, "interrupted_version": version}]
     fresh["control"], fresh["live"] = new_control, dict(dist)
     fresh["data_since"] = minute  # a re-entered arm restarts its sample-size floor on post-edit data only
-    ctx.store.add_decision(ctx.now, "experiment_interrupted", f"supervisor edit of {dim} at {xs.clock(minute)} (v{version}): "
+    ctx.store.add_decision(ctx.now, "experiment_interrupted", f"supervisor edit of {dim} at {fmt_minute(minute)} (v{version}): "
                            f"experiment interrupted, {new_control} is the new control; pre-edit data stays valid for arms that "
                            "ran; nothing will re-impose the old allocation", wid,
                            {"dim": dim, "version": version, "new_control": new_control, "old_control": st["control"],
@@ -183,9 +184,9 @@ def _pause_for_edit(ctx, st: dict, wid: str, dim: str, version: int, minute: int
     st["desired"] = None
     if st["phase"] == xs.PENDING:
         st["control"] = xs.top_option(dist)
-    ctx.store.add_decision(ctx.now, "experiment_supervisor_edit_pending", f"supervisor edit of {dim} at {xs.clock(minute)} "
+    ctx.store.add_decision(ctx.now, "experiment_supervisor_edit_pending", f"supervisor edit of {dim} at {fmt_minute(minute)} "
                            f"(v{version}) while the experiment is {st['phase']}: {'pending proposal dropped, ' if dropped else ''}"
-                           f"no entry before {xs.clock(st['not_before'])}", wid,
+                           f"no entry before {fmt_minute(st['not_before'])}", wid,
                            {"dim": dim, "version": version, "dist": dict(dist), "not_before": st["not_before"]})
 
 
@@ -358,7 +359,7 @@ def _daily_look(ctx: PlanContext, st: dict, wid: str, dim: str, wf: Mapping, cfg
 
 
 def _conclude(ctx, st, wid, dim, why: str) -> None:
-    for a, v in st["arms"].items():
+    for v in st["arms"].values():
         if v["state"] == "active":
             v["state"] = "dropped"
     st["shares"] = {}
@@ -386,7 +387,7 @@ def _promote(ctx, st, wid, dim, winner, scope, rec, group, snap) -> None:
     ctx.store.add_decision(ctx.now, "experiment_promote", summary, wid, {"dim": dim, "record": rec, "scope": scope, "stage": 1})
 
 
-def _harm_check(ctx, st, wid, dim, wf, cfg) -> None:
+def _harm_check(ctx, st, wid, dim, cfg) -> None:
     """Severe harm-stop. Its weights are the LIVE split minus the stopped arms (their share to control): ``st["shares"]``
     may already hold a planned, not-yet-approved ramp, and a harm-stop (possibly auto-applied) must not carry it live."""
     start = _start(ctx, st, wid, dim)
@@ -449,7 +450,7 @@ def _plan_stage2(ctx, st, wid, dim, promo, stage_min, cells) -> None:
     weights = exp_alloc.promotion_weights(promo["winner"], promo["old_control"], 2)
     cohort_weights = {cid: weights for cid in (promo.get("cohorts") or [])}
     default = {promo["old_control"]: 1.0} if cohort_weights else weights
-    summary, rationale = prop.stage2(dim, promo["winner"], promo["old_control"], why, weights)
+    summary, rationale = prop.stage2(dim, promo["winner"], why, weights)
     _set_desired(st, default, "experiment_stage2", summary, rationale, cohort_weights=cohort_weights, then=xs.PROMOTED,
                  extra={"why": why}, impact=0.3)
     ctx.store.add_decision(ctx.now, "experiment_stage2", summary, wid, {"dim": dim, "why": why})
@@ -500,7 +501,7 @@ def _step(ctx: PlanContext, wid: str, dim: str, wf: Mapping) -> None:
         if ctx.now % DAY >= _look_minute(wf, exp_entry.sim_params(ctx)[0]) and st["last_look_day"] < ctx.now // DAY:
             _daily_look(ctx, st, wid, dim, wf, cfg)
         elif ctx.now - st["last_check"] >= settings.EXP_HARM_CHECK_MINUTES:
-            _harm_check(ctx, st, wid, dim, wf, cfg)
+            _harm_check(ctx, st, wid, dim, cfg)
     elif st["phase"] == xs.PROMOTED and ctx.now - st["last_check"] >= settings.EXP_HARM_CHECK_MINUTES:
         _decay_check(ctx, st, wid, dim)
     if json.dumps(st, sort_keys=True) != before:
@@ -625,7 +626,6 @@ def _withhold(ctx, st, wid, dim, d, reason: str) -> None:
             st[k] = v
         if d["kind"] == "experiment_promote":
             st.pop("promo", None)
-            st.setdefault("withdrawn", []).append({"winner": d["evidence"].get("record", {}).get("winner"), "minute": ctx.now})
     st["desired"] = None
     xs.save(ctx.store, wid, dim, st)
     ctx.store.add_decision(ctx.now, "experiment_apply_withheld", reason, wid, {"dim": dim, "kind": d["kind"]})

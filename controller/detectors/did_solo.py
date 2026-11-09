@@ -1,4 +1,4 @@
-"""A1: own-history step test for a DID that has no usable peers (CONTEXT C5 for single-DID workflows).
+"""Own-history step test for a DID that has no usable peers (CONTEXT C5 for single-DID workflows).
 
 With one active caller ID there is no peer to cancel common shocks, so the DID is compared with its own
 past: connects in the recent window against the connects EXPECTED if it kept its reference-period pickup
@@ -9,11 +9,11 @@ what is left is a step. Pure functions here; ``did.py`` feeds them and applies p
 from __future__ import annotations
 
 import math
-from typing import Mapping, Sequence
+from typing import Callable, Mapping, Sequence
 
 from .. import settings
 from ..stats import RatioDrop, norm_sf
-from .did_eval import StepResult
+from .did_eval import StepResult, hour_loads, mean_h
 
 Rows = Mapping[tuple[int, int], tuple[int, int]]  # (abs_hour, cell) -> (dials, connects)
 
@@ -76,7 +76,7 @@ def solo_test(rows: Rows, did: str, cur_hour: int, k: int, fatigue_ratio: float)
     return StepResult(did, k, n_w, 0, n_r, test, 1.0, 1.0, solo=True)
 
 
-def solo_steps(rows: Rows, did: str, cur_hour: int, fatigue_ratio_for: "callable",
+def solo_steps(rows: Rows, did: str, cur_hour: int, fatigue_ratio_for: Callable[[int], float],
                windows: Sequence[int] = settings.DID_FLAG_WINDOWS_HOURS) -> list[StepResult]:
     out = []
     for k in windows:
@@ -88,9 +88,8 @@ def solo_steps(rows: Rows, did: str, cur_hour: int, fatigue_ratio_for: "callable
 
 def fatigue_ratio(series, curve, loads, did: str, win: range, ref: range) -> float:
     """h(window mean load) / h(reference mean load): the change the fatigue curve already predicts."""
-    from .did_eval import _mean_h
-    hw, _, nw = _mean_h(curve, loads, series, [did], win)
-    hr, _, nr = _mean_h(curve, loads, series, [did], ref)
+    hw, _, nw = mean_h(curve, loads, series, [did], win)
+    hr, _, nr = mean_h(curve, loads, series, [did], ref)
     return hw / hr if nw and nr and hr > 0 else 1.0
 
 
@@ -105,11 +104,10 @@ def load_rows(store, wid: str, did: str, cur_hour: int) -> dict:
 
 def peerless_steps(store, wid: str, series, curve, cur_hour: int, dids: Sequence[str]) -> list[StepResult]:
     """Own-history steps for the DIDs that carry traffic but have no peer step results."""
-    from .did_eval import _hour_loads
     if not dids:
         return []
     span = settings.DID_SOLO_REF_HOURS + max(settings.DID_FLAG_WINDOWS_HOURS) + 1
-    loads = _hour_loads(series, curve, cur_hour - span, cur_hour)
+    loads = hour_loads(series, curve, cur_hour - span, cur_hour)
     out: list[StepResult] = []
     for did in dids:
         rows = load_rows(store, wid, did, cur_hour)

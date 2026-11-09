@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import logging
 import time
-from typing import Any, Callable, Iterator
+from typing import Any, Callable
 
 import httpx
 
@@ -204,9 +204,6 @@ class SimClient:
     def workflows(self) -> list[dict]:
         return self._json("GET", "/workflows")
 
-    def workflow(self, workflow_id: str) -> dict:
-        return self._json("GET", f"/workflows/{workflow_id}")
-
     def get_config(self, workflow_id: str) -> dict:
         return self._json("GET", f"/workflows/{workflow_id}/config")
 
@@ -242,11 +239,6 @@ class SimClient:
             for line in resp.iter_lines():
                 return line
         return ""
-
-    def iter_chunk_lines(self, chunk: int) -> Iterator[str]:
-        for line in self.get_chunk_text(chunk).splitlines():
-            if line:
-                yield line
 
     # ------------------------------------------------------------ mutations
     def advance(self, minutes: int) -> dict:

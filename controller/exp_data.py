@@ -125,6 +125,7 @@ def load_arms(store: Store, wid: str, dim: str, start_minute: int, now: int,
             for arm in sorted(set(eng_s) | set(pick) | set(rec_s))}
 
 
+# Test oracle: the cached ``load_arms`` path is compared against this single-scan reference in tests.
 def _load_arms_raw(store: Store, wid: str, dim: str, start_minute: int, now: int,
               cells: Sequence[int] | None = None) -> dict[str, ArmData]:
     """Reference implementation: one scan of ``calls`` (tests compare the cached path against it).

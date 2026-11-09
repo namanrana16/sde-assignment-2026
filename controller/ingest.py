@@ -40,9 +40,6 @@ from .store import Store
 log = logging.getLogger(__name__)
 _EPOCH_ORD = date.fromisoformat(settings.EPOCH_DATE).toordinal()
 _MAX_MISMATCH_ALERTS = 5
-# Pages of WAL allowed before an automatic checkpoint during history ingest (about 1 GB at 4 KiB pages).
-# Module constant here because settings.py is owned elsewhere; the PM may move it.
-HISTORY_WAL_AUTOCHECKPOINT_PAGES = 250_000
 _CONFIG_CHANGED_LINE = re.compile(r'^.*"config_changed".*$', re.MULTILINE)
 
 _CALL_SQL = ("INSERT OR IGNORE INTO calls(event_id, workflow_id, ts_minute, day, hour, lid,"
@@ -60,11 +57,40 @@ class IngestIntegrityError(RuntimeError):
     """Rows inserted differ from rows in the batch: abort the chunk transaction."""
 
 
+# Minutes to subtract from the contract-epoch minute; set once at startup by ``anchor_epoch``.
+_epoch_offset_minutes = 0
+
+
+def _raw_ts_to_minute(ts: str) -> int:
+    """ISO timestamp to minutes since the contract epoch (EPOCH_DATE 00:00), no anchor applied."""
+    dt = datetime.fromisoformat(ts)
+    return (dt.date().toordinal() - _EPOCH_ORD) * settings.MINUTES_PER_DAY + dt.hour * 60 + dt.minute
+
+
 @lru_cache(maxsize=settings.TS_CACHE_MAX)
 def ts_to_minute(ts: str) -> int:
     """ISO timestamp (IST) to simulated minute since Day 0 00:00 (negative in history)."""
-    dt = datetime.fromisoformat(ts)
-    return (dt.date().toordinal() - _EPOCH_ORD) * settings.MINUTES_PER_DAY + dt.hour * 60 + dt.minute
+    return _raw_ts_to_minute(ts) - _epoch_offset_minutes
+
+
+def reset_epoch_anchor() -> None:
+    """Back to the contract epoch (offset 0); clears the ts cache."""
+    global _epoch_offset_minutes
+    _epoch_offset_minutes = 0
+    ts_to_minute.cache_clear()
+
+
+def anchor_epoch(state_ts: str, state_minute: int) -> int:
+    """Derive the epoch offset from ``GET /sim/state`` so ``ts_to_minute(state_ts) == state_minute``.
+
+    Returns the shift in minutes against the contract epoch (0 on the public contract). Pure
+    function of the state, so a restart re-derives the same offset; nothing is persisted.
+    """
+    global _epoch_offset_minutes
+    delta = _raw_ts_to_minute(state_ts) - state_minute
+    _epoch_offset_minutes = delta
+    ts_to_minute.cache_clear()
+    return delta
 
 
 @dataclass(frozen=True)
@@ -128,7 +154,7 @@ class Ingestor:
         """History chunks without the calls_lead index and with a large WAL; then build the index."""
         total = IngestStats()
         pending = self.client.list_chunks("history", self.store.get_cursor().last_chunk)
-        self.store.set_wal_autocheckpoint(HISTORY_WAL_AUTOCHECKPOINT_PAGES)
+        self.store.set_wal_autocheckpoint(settings.HISTORY_WAL_AUTOCHECKPOINT_PAGES)
         try:
             for meta in sorted(pending, key=lambda m: m["chunk"]):
                 total += self.process_chunk(meta)

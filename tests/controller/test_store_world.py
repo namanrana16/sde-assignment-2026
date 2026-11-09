@@ -71,8 +71,7 @@ def test_store_helpers(store):
     assert store.get_cursor().last_chunk == 2
     store.store_config_body("w", 1, "init", {"cohorts": [], "x": 1})
     store.upsert_config_event("w", 1, "supervisor", 5, ["voice"], None, None)
-    assert store.config_body("w", 1)["x"] == 1 and store.has_config_body("w", 1)
-    assert not store.has_config_body("w", 2)
+    assert store.config_body("w", 1)["x"] == 1
     store.add_decision(1, "k", "s", "w", {"a": 1})
     store.add_alert(1, "warn", "c", "m")
     store.add_metric(1, 2, 0.1, 0.2, 0.3, 15)

@@ -3,13 +3,16 @@
 One *scope* is one population analysed on its own (the whole workflow, or a pre-registered analysis group). For a
 scope the rule has four parts:
 
-* harm check (every 4 h):  z <= -3 with >= 150 connects        -> remove now; z <= -2.5 folds into the daily look;
-* ramp / drop (daily):      point >= control after >=1 day and >=100 connects -> ramp;  whole-experiment z <= -1.5
-                            (<300 connects) or <= -1 (>=300 connects) -> drop, otherwise defer; an arm already ramped
-                            is also dropped at last-24h z <= -1.5 (in-experiment decay check);
-* winner (daily, <= 4 looks): one-sided z against control past a Lan-DeMets O'Brien-Fleming boundary at the arm's own
-                            information fraction, Holm across the dim's arms, AND point lift >= 3%, AND recent-window
-                            lift lower bound > 0, AND pickup non-inferiority within ``max_drop``.
+* harm check (every EXP_HARM_CHECK_MINUTES): z <= EXP_HARM_Z with >= EXP_HARM_MIN_CONNECTS connects -> remove now;
+                            z <= EXP_HARM_Z / 1.2 folds into the daily look;
+* ramp / drop (daily):      point >= control after EXP_RAMP_MIN_DAYS and EXP_RAMP_MIN_CONNECTS -> ramp; whole-experiment
+                            z at ``drop_threshold`` (EXP_DROP_Z_SMALL below EXP_DROP_BIG_N connects, else EXP_DROP_Z) ->
+                            drop, otherwise defer; an arm already ramped is also dropped at last-24h z <=
+                            EXP_RAMPED_DROP_RECENT_Z (in-experiment decay check);
+* winner (daily, <= len(EXP_LOOK_FRACTIONS) looks): one-sided z against control past a Lan-DeMets O'Brien-Fleming
+                            boundary at the arm's own information fraction, Holm across the dim's arms, AND point lift
+                            >= EXP_MIN_POINT_LIFT, AND recent-window lift lower bound > 0, AND pickup non-inferiority
+                            within ``max_drop``.
 """
 from __future__ import annotations
 
@@ -47,7 +50,7 @@ def pair_contrast(d: ArmData, ctl: ArmData, recent: bool = False) -> es.Contrast
 
 def drop_holds(s: Mapping, is_ramped: bool) -> bool:
     """Drop predicate of the decision look: whole-experiment z at the drop bound; an arm already carrying the ramp
-    share (20%: keeping it costs ~3x a 7.5% entry arm) is also dropped when its last-24h z is <= EXP_RAMPED_DROP_RECENT_Z
+    share (EXP_RAMP_SHARE: keeping it costs ~3x an EXP_ENTRY_SHARE arm) is also dropped when its last-24h z is <= EXP_RAMPED_DROP_RECENT_Z
     (the in-experiment decay check)."""
     if not s.get("ok"):
         return False
@@ -57,7 +60,7 @@ def drop_holds(s: Mapping, is_ramped: bool) -> bool:
 
 
 def drop_threshold(n_arm: float) -> float:
-    """Whole-experiment drop bound: a stricter z below EXP_DROP_BIG_N connects (a 7.5% arm costs <= 0.075 |effect|)."""
+    """Whole-experiment drop bound: a stricter z below EXP_DROP_BIG_N connects (an entry-share arm costs at most EXP_ENTRY_SHARE x |effect|)."""
     return settings.EXP_DROP_Z if n_arm >= settings.EXP_DROP_BIG_N else settings.EXP_DROP_Z_SMALL
 
 
@@ -66,6 +69,42 @@ def design_information() -> float:
     za = _N.inv_cdf(1 - settings.EXP_DESIGN_ALPHA)
     zb = _N.inv_cdf(settings.EXP_DESIGN_POWER)
     return (za + zb) ** 2 / math.log(1 + settings.EXP_DESIGN_MDE) ** 2
+
+
+_Z_FLOOR_P = 1e-15  # keeps the zero-engaged z finite (about -7.9)
+
+
+def zero_engaged_z(p_ctrl: float, n_eff: float) -> float:
+    """z of "no engagement in ``n_eff`` independent leads" when the control rate is ``p_ctrl``: -Phi^-1(1 - (1 - p)^n).
+
+    Conservative: ``n_eff`` is the arm's number of distinct leads (clusters), not its connects."""
+    return _N.inv_cdf(max((1.0 - p_ctrl) ** n_eff, _Z_FLOOR_P))
+
+
+def _zero_rows(arm: es.Rows, ctl: es.Rows) -> tuple[float, float] | None:
+    """(control rate, arm leads) when the ARM has connects but none engaged and control has engagements, else None."""
+    n_a, x_a = es.totals(arm)
+    n_c, x_c = es.totals(ctl)
+    if n_a <= 0 or x_a > 0 or n_c <= 0 or x_c <= 0:
+        return None
+    return x_c / n_c, float(sum(1 for r in arm.values() if r[0] > 0))
+
+
+def zero_engaged_record(arm: es.Rows, ctl: es.Rows) -> dict | None:
+    """Cumulative summary fields of a zero-engaged arm: droppable and harm-stoppable, never testable for promotion."""
+    zr = _zero_rows(arm, ctl)
+    if zr is None:
+        return None
+    return {"ok": True, "zero_engaged": True, "rate_arm": 0.0, "rate_ctrl": zr[0], "lift": -1.0,
+            "z": zero_engaged_z(*zr), "se": 0.0, "info": 0.0, "clusters": int(zr[1])}
+
+
+def zero_engaged_recent(arm: es.Rows, ctl: es.Rows) -> dict | None:
+    """Recent-window fields of a zero-engaged arm (needs EXP_RECENT_MIN_CONNECTS connects)."""
+    zr = _zero_rows(arm, ctl)
+    if zr is None or es.totals(arm)[0] < settings.EXP_RECENT_MIN_CONNECTS:
+        return None
+    return {"recent_lift": -1.0, "recent_z": zero_engaged_z(*zr), "recent_lb": -1.0}
 
 
 def summarise(data: Mapping[str, ArmData], control: str, arms: Sequence[str]) -> dict[str, dict]:
@@ -77,12 +116,16 @@ def summarise(data: Mapping[str, ArmData], control: str, arms: Sequence[str]) ->
         c = pair_contrast(d, ctl)
         r = pair_contrast(d, ctl, recent=True)
         rec = {"n_arm": es.totals(d.engaged)[0], "n_ctrl": es.totals(ctl.engaged)[0], "ok": c is not None}
-        if c is not None:
+        if c is None:
+            rec.update(zero_engaged_record(d.engaged, ctl.engaged) or {})
+        else:
             rec.update(rate_arm=c.rate_a, rate_ctrl=c.rate_c, lift=c.lift, z=c.z, se=c.se, info=c.info,
                        clusters=c.clusters)
         rec["recent_n"] = es.totals(d.recent)[0]
         if r is not None:
             rec.update(recent_lift=r.lift, recent_z=r.z, recent_lb=r.lift_lower(settings.EXP_RECENT_Z))
+        else:
+            rec.update(zero_engaged_recent(d.recent, ctl.recent) or {})
         out[arm] = rec
     return out
 
@@ -95,7 +138,7 @@ def harm_stops(summary: Mapping[str, dict]) -> dict[str, str]:
             continue
         if s["z"] <= settings.EXP_HARM_Z:
             out[arm] = "now"
-        elif s["z"] <= settings.EXP_HARM_Z / 1.2:  # -2.5
+        elif s["z"] <= settings.EXP_HARM_Z / 1.2:  # the fold bound
             out[arm] = "fold"
     return out
 
@@ -112,8 +155,9 @@ def pickup_guard(data: Mapping[str, ArmData], control: str, arm: str, max_drop: 
 def ramp_blocked(s: Mapping) -> bool:
     """A bad recent window (last 24 h z <= EXP_DROP_Z on >= EXP_RECENT_MIN_CONNECTS) blocks a ramp at the look and at apply.
 
-    The window needs only EXP_RECENT_MIN_CONNECTS: a 7.5% arm sees ~85 connects a day, below the 100 a ramp needs
-    cumulatively, so a threshold of 100 never let a decaying entry arm's recent window count (C5)."""
+    The window needs only EXP_RECENT_MIN_CONNECTS: an entry-share arm sees fewer connects a day than the
+    EXP_RAMP_MIN_CONNECTS a ramp needs cumulatively, so that threshold would never let a decaying entry arm's recent
+    window count."""
     return bool(s.get("ok")) and s["recent_n"] >= settings.EXP_RECENT_MIN_CONNECTS and s.get("recent_z", 0.0) <= settings.EXP_DROP_Z
 
 
@@ -190,7 +234,7 @@ def daily_look(data: Mapping[str, ArmData], control: str, active: Sequence[str],
             out.ramp.append(arm)
     if not test_winner or looks_taken >= len(settings.EXP_LOOK_FRACTIONS):
         return out
-    testable = {a: s for a, s in summary.items() if s["ok"] and a not in out.drop
+    testable = {a: s for a, s in summary.items() if s["ok"] and not s.get("zero_engaged") and a not in out.drop
                 and s["n_arm"] >= settings.EXP_MIN_ARM_CONNECTS_FOR_TEST}
     if not testable or max(s["t"] for s in testable.values()) < settings.EXP_LOOK_FRACTIONS[looks_taken]:
         return out

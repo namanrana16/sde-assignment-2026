@@ -20,7 +20,7 @@ from ..incidents import close_incident, open_incident, open_incidents
 from . import did_data, did_eval, did_plan, did_solo
 from .common import latest_config, load_state, note_once, once_alert, save_state
 from .did_owner import clock, minimal_evacuation, supervisor_edit
-from .did_plan import BAD, FLAGGED, REPROBE, SUSPECT, TESTED, UNTESTED, WEAK
+from .did_plan import FLAGGED, REPROBE, SUSPECT, TESTED, UNTESTED, WEAK
 from .fatigue_curve import FatigueCurve, fit_curve
 
 log = logging.getLogger(__name__)
@@ -98,7 +98,7 @@ def _evaluate(ctx: PlanContext, wid: str) -> tuple[did_eval.Evaluation, dict] | 
 
 
 def _add_solo_steps(ctx, wid: str, ev, series, curve, options, st: dict) -> None:
-    """A1: a DID with no peer step test (no peers with enough dials) is tested against its own history."""
+    """A DID with no peer step test (no peers with enough dials) is tested against its own history."""
     cur = ctx.now // 60
     tested = {r.did for r in ev.steps}
     recent, _ = series.window(range(cur - 24 + 1, cur + 1))
@@ -150,7 +150,7 @@ def _mark_weak_and_tested(ctx: PlanContext, wid: str, ev, st: dict, options) -> 
                                          "dials": ev.total_dials.get(did)})
 
 
-def _close_evacuated(ctx: PlanContext, wid: str, ev, st: dict) -> None:
+def _close_evacuated(ctx: PlanContext, wid: str, ev) -> None:
     """An evacuation closes when the flagged DID's OBSERVED trailing share is ~0 (the config share says what
     we asked for; under next_campaign_only old campaigns keep their DID until their cadence ends)."""
     cfg = latest_config(ctx.store, wid)
@@ -168,7 +168,7 @@ def _config_share(cfg: Mapping, did: str) -> float:
     return max((dist(cfg, key, "caller_id").get(did, 0.0) for key in _keys(cfg)), default=0.0)
 
 
-def _expire_flags(ctx: PlanContext, wid: str, ev, st: dict) -> None:
+def _expire_flags(ctx: PlanContext, wid: str, st: dict) -> None:
     """A flag is not permanent: after the cooldown (and once evacuated) the DID is re-probed at the re-probe cap."""
     open_dids = {i["body"]["did"] for i in open_incidents(ctx.store, wid, "did_flagged")}
     for did, f in sorted(st["flagged"].items()):
@@ -230,8 +230,8 @@ def _detect_workflow(ctx: PlanContext, wid: str) -> None:
     if active and _persisted(ctx, st, flagged):
         _flag(ctx, wid, ev, st, flagged)
     _mark_weak_and_tested(ctx, wid, ev, st, options)
-    _close_evacuated(ctx, wid, ev, st)
-    _expire_flags(ctx, wid, ev, st)
+    _close_evacuated(ctx, wid, ev)
+    _expire_flags(ctx, wid, st)
     save_state(ctx.store, DETECTOR, wid, st)
     if active:
         _log_evaluation(ctx, wid, ev, st, options)
@@ -281,7 +281,7 @@ def did_producer(ctx: PlanContext, wid: str) -> list[DesiredChange]:
     for key in _keys(cfg[1]):
         cur = dist(cfg[1], key, "caller_id")
         sup = supervisor_edit(ctx.store, wid, key)
-        if sup:  # B1: a supervisor's allocation is owned; the only exception is evacuating a FLAGGED DID (approval)
+        if sup:  # a supervisor's allocation is owned; the only exception is evacuating a FLAGGED DID (approval)
             step = _hold_owned(ctx, wid, key, cur, sup, status, st)
             if step:
                 owned.append((key, sup, dict(cur), step))

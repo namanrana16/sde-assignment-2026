@@ -1,4 +1,4 @@
-"""Incremental per-prompt flag/adherence/engagement tracker over connected calls (CONTEXT C8, C3).
+"""Incremental per-prompt flag/engagement tracker over connected calls (CONTEXT C8, C3).
 
 State per workflow (JSON in ``detector_state``): per-PROMPT rolling hourly buckets
 (``prompts[prompt]["hours"][abs_hour] = counts``) plus lifetime totals per prompt. Under
@@ -18,15 +18,16 @@ from .common import load_state, save_state
 
 DETECTOR = "halluc"
 BUCKET_KEEP_HOURS = 96
-# counts: [connects, flags, sum_adherence, engaged]
+# counts: [connects, flags, engaged]; state written by older runs held [connects, flags, sum_adherence, engaged]
+# (see ``_upgrade_counts``)
 
 
 def _add(a: list, b: list) -> list:
-    return [a[0] + b[0], a[1] + b[1], a[2] + b[2], a[3] + b[3]]
+    return [a[0] + b[0], a[1] + b[1], a[2] + b[2]]
 
 
 def _zero() -> list:
-    return [0, 0, 0.0, 0]
+    return [0, 0, 0]
 
 
 def fresh_state() -> dict:
@@ -54,7 +55,16 @@ def _apply_group(st: dict, prompt: str, hour: int, counts: list, first_ts: int, 
             st["base"] = _add(st["base"], counts)
 
 
+def _upgrade_counts(c: list) -> list:
+    """Old 4-element counts [connects, flags, sum_adherence, engaged] -> [connects, flags, engaged]."""
+    return [c[0], c[1], c[3]] if len(c) == 4 else c
+
+
 def _upgrade(st: dict) -> dict:
+    st["base"] = _upgrade_counts(st["base"]) if "base" in st else _zero()
+    for slot in st.get("prompts", {}).values():
+        slot["total"] = _upgrade_counts(slot["total"])
+        slot["hours"] = {k: _upgrade_counts(v) for k, v in slot["hours"].items()}
     st.setdefault("prompts", {})
     st.setdefault("day0", {})
     if isinstance(st.get("bad"), list):
@@ -67,12 +77,12 @@ def update(store: Store, wid: str) -> dict:
     """Fold calls newer than the stored event id into the state; returns (and saves) it."""
     st = _upgrade(load_state(store, DETECTOR, wid) or fresh_state())
     rows = store.conn.execute(
-        "SELECT prompt, day*24+hour AS h, COUNT(*), COALESCE(SUM(halluc_flag),0), COALESCE(SUM(adherence),0.0),"
+        "SELECT prompt, day*24+hour AS h, COUNT(*), COALESCE(SUM(halluc_flag),0),"
         " SUM(engaged), MIN(ts_minute), MAX(ts_minute), MAX(event_id) FROM calls"
         " WHERE workflow_id=? AND event_id>? AND connected=1 GROUP BY prompt, h ORDER BY MIN(ts_minute), h",
         (wid, st["last_event"])).fetchall()
-    for prompt, hour, n, flags, adh, eng, lo, hi, last_id in rows:
-        _apply_group(st, prompt, hour, [n, flags, adh, eng], lo, hi)
+    for prompt, hour, n, flags, eng, lo, hi, last_id in rows:
+        _apply_group(st, prompt, hour, [n, flags, eng], lo, hi)
         st["last_event"] = max(st["last_event"], last_id)
     if rows:
         newest = max(int(k) for slot in st["prompts"].values() for k in slot["hours"])
@@ -97,7 +107,7 @@ def counts_since(st: Mapping, prompt: str, since_minute: int, upto_minute: int |
 
 
 def window_counts(st: Mapping, prompt: str, now: int) -> list:
-    """The prompt's connects/flags/adherence/engaged over the rolling day ending at ``now``."""
+    """The prompt's connects/flags/engaged over the rolling day ending at ``now``."""
     return counts_since(st, prompt, now - settings.HALLUC_WINDOW_MINUTES + 60, now)
 
 

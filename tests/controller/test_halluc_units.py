@@ -14,38 +14,38 @@ WF = {"workflow_id": "w", "governance": {"min_validation_pass_rate": 0.97},
 
 # ------------------------------------------------------------------ segment test
 def test_segment_test_triggers_on_a_real_spike_with_enough_connects():
-    base = [14000, 206, 14000 * 0.93, 7000]
-    seg = [250, 14, 250 * 0.85, 120]  # 5.6% vs 1.5%
+    base = [14000, 206, 7000]
+    seg = [250, 14, 120]  # 5.6% vs 1.5%
     t = hl.segment_test(seg, base)
     assert t["triggered"] and t["p"] < settings.HALLUC_P
 
 
 def test_segment_test_needs_min_connects_and_ignores_noise():
-    base = [14000, 206, 13000.0, 7000]
-    assert not hl.segment_test([120, 12, 110.0, 60], base)["triggered"]  # high rate, too few connects
-    assert not hl.segment_test([400, 7, 372.0, 200], base)["triggered"]  # 1.75%: noise
-    assert not hl.segment_test([400, 2, 372.0, 200], base)["triggered"]  # lower is never an alert
+    base = [14000, 206, 7000]
+    assert not hl.segment_test([120, 12, 60], base)["triggered"]  # high rate, too few connects
+    assert not hl.segment_test([400, 7, 200], base)["triggered"]  # 1.75%: noise
+    assert not hl.segment_test([400, 2, 200], base)["triggered"]  # lower is never an alert
 
 
-def test_borderline_rate_is_not_rescued_by_an_adherence_drop():
-    """Review fix 5: the old 10x-alpha 'corroborated' branch is gone; p must clear alpha on its own."""
-    base = [14000, 206, 14000 * 0.93, 7000]
-    seg = [500, 18, 500 * 0.80, 250]  # 3.6% with a big adherence drop: p between 1e-4 and 1e-3
+def test_borderline_rate_must_clear_alpha_on_its_own():
+    """No 10x-alpha 'corroborated' branch: p must clear alpha by itself."""
+    base = [14000, 206, 7000]
+    seg = [500, 18, 250]  # 3.6%: p between 1e-4 and 1e-3
     t = hl.segment_test(seg, base)
     assert 1e-4 <= t["p"] < 1e-3 and not t["triggered"]
 
 
 def test_small_counts_use_the_exact_test():
     from controller.stats import fisher_greater
-    base = [600, 3, 560.0, 300]  # small baseline: exact Fisher, not the pooled z
-    t = hl.segment_test([250, 9, 230.0, 120], base)
+    base = [600, 3, 300]  # small baseline: exact Fisher, not the pooled z
+    t = hl.segment_test([250, 9, 120], base)
     assert t["p"] == pytest.approx(fisher_greater(9, 250, 3, 600))
 
 
 def test_ceiling_test_is_baseline_free():
-    assert hl.ceiling_test([600, 40, 500.0, 300], 0.03)["triggered"]  # 6.7%, lower bound well above 3%
-    assert not hl.ceiling_test([600, 15, 500.0, 300], 0.03)["triggered"]  # 2.5%
-    assert not hl.ceiling_test([100, 20, 90.0, 50], 0.03)["triggered"]  # too few connects
+    assert hl.ceiling_test([600, 40, 300], 0.03)["triggered"]  # 6.7%, lower bound well above 3%
+    assert not hl.ceiling_test([600, 15, 300], 0.03)["triggered"]  # 2.5%
+    assert not hl.ceiling_test([100, 20, 50], 0.03)["triggered"]  # too few connects
 
 
 def test_day0_verdict_is_conclusive_only_when_the_upper_bound_misses_the_bar():
@@ -58,15 +58,15 @@ def test_day0_verdict_is_conclusive_only_when_the_upper_bound_misses_the_bar():
 
 
 def test_drift_uses_a_stricter_level():
-    base = [13000, 170, 12000.0, 7000]
-    seg = [1000, 27, 930.0, 500]  # 2.7% vs 1.3%: p ~ 3e-4, an unlucky day, not an incident
+    base = [13000, 170, 7000]
+    seg = [1000, 27, 500]  # 2.7% vs 1.3%: p ~ 3e-4, an unlucky day, not an incident
     assert not hl.segment_test(seg, base, settings.HALLUC_P_DRIFT)["triggered"]
 
 
 def test_engagement_guardrail():
-    base = [1000, 15, 930.0, 500]
-    assert hl.engagement_ok([400, 5, 372.0, 190], base, 0.02)[0]  # 47.5% vs 50%: within noise
-    assert not hl.engagement_ok([2000, 20, 1860.0, 800], base, 0.02)[0]  # 40%: strict-script trap
+    base = [1000, 15, 500]
+    assert hl.engagement_ok([400, 5, 190], base, 0.02)[0]  # 47.5% vs 50%: within noise
+    assert not hl.engagement_ok([2000, 20, 800], base, 0.02)[0]  # 40%: strict-script trap
 
 
 # ------------------------------------------------------------------ fix ranking
@@ -124,7 +124,7 @@ def new_body(stats=None):
 
 def state_with_known_good():
     st = hd.fresh_state()
-    st["prompts"] = {"P1": {"total": [14000, 210, 13000.0, 7000], "hours": {}, "first_ts": -5000, "last_ts": 3000}}
+    st["prompts"] = {"P1": {"total": [14000, 210, 7000], "hours": {}, "first_ts": -5000, "last_ts": 3000}}
     return st
 
 
@@ -212,10 +212,10 @@ def test_day0_validation_scales_down_instead_of_skipping(store):
 def test_verify_requires_non_inferior_flags_and_engagement(store):
     client = FakeClient()
     st = hd.fresh_state()
-    st["first_prompt"], st["base"], st["base_frozen"] = "P1", [14000, 84, 13000.0, 7000], True
+    st["first_prompt"], st["base"], st["base_frozen"] = "P1", [14000, 84, 7000], True
     body = new_body()
     inc_id = incidents.open_incident(store, "w", "halluc", 4000, body)
-    hd._apply_group(st, "P1", 100, [500, 3, 460.0, 240], 5940, 6000)
+    hd._apply_group(st, "P1", 100, [500, 3, 240], 5940, 6000)
     hl._verify(ctx_for(store, client, now=6000), "w", {"id": inc_id, "opened_minute": 4000, "body": body}, st, "P1")
     assert store.conn.execute("select state from incidents").fetchone()[0] == "closed"
 
@@ -223,14 +223,14 @@ def test_verify_requires_non_inferior_flags_and_engagement(store):
 def test_verify_failure_marks_prompt_bad_and_tries_next(store):
     client = FakeClient()
     st = hd.fresh_state()
-    st["first_prompt"], st["base"], st["base_frozen"] = "P1", [14000, 84, 13000.0, 7000], True
+    st["first_prompt"], st["base"], st["base_frozen"] = "P1", [14000, 84, 7000], True
     body = new_body()
     body["candidates"] = [{"prompt": "P3", "validation_run_id": "v", "pass_rate": 1.0, "n": 300, "source": "llm"},
                           {"prompt": "P5", "validation_run_id": "w", "pass_rate": 0.99, "n": 300, "source": "llm"}]
     body["target"] = "P3"
     body["reverts_checked"] = body["suggested"] = True
     inc_id = incidents.open_incident(store, "w", "halluc", 4000, body)
-    hd._apply_group(st, "P3", 100, [500, 40, 450.0, 240], 5940, 6000)  # 8%: not non-inferior
+    hd._apply_group(st, "P3", 100, [500, 40, 240], 5940, 6000)  # 8%: not non-inferior
     hl._verify(ctx_for(store, client, now=6000), "w", {"id": inc_id, "opened_minute": 4000, "body": body}, st, "P3")
     assert body["tried"] == ["P3"] and body["target"] == "P5" and hd.is_bad(st, "P3", 6000)
 
@@ -238,13 +238,13 @@ def test_verify_failure_marks_prompt_bad_and_tries_next(store):
 def test_false_alarm_closes_and_lifts_the_blacklist(store):
     client = FakeClient()
     st = hd.fresh_state()
-    st["first_prompt"], st["base"], st["base_frozen"] = "P2", [14000, 210, 13000.0, 7000], True
+    st["first_prompt"], st["base"], st["base_frozen"] = "P2", [14000, 210, 7000], True
     body = new_body()
     body["baseline_prompt"] = "P2"
     body["recheck_fail"] = settings.HALLUC_RECHECK_FAILS - 1
     inc_id = incidents.open_incident(store, "w", "halluc", 4000, body)
     hd.mark_bad(st, "P2", 4000, "prompt_flag_spike")
-    hd._apply_group(st, "P2", 100, [400, 6, 370.0, 200], 5940, 6000)  # 1.5% = baseline: no spike
+    hd._apply_group(st, "P2", 100, [400, 6, 200], 5940, 6000)  # 1.5% = baseline: no spike
     hl._manage(ctx_for(store, client, now=6000), "w", {"id": inc_id, "opened_minute": 4000, "body": body}, st, "P2")
     assert store.conn.execute("select state from incidents").fetchone()[0] == "closed"
     assert not hd.is_bad(st, "P2", 6000)
@@ -315,7 +315,7 @@ def test_noisy_single_day0_run_is_inconclusive_not_an_incident(store):
 
 def _verify_state(prompt_counts):
     st = hd.fresh_state()
-    st["first_prompt"], st["base"], st["base_frozen"] = "P1", [17000, 226, 16000.0, 9200], True
+    st["first_prompt"], st["base"], st["base_frozen"] = "P1", [17000, 226, 9200], True
     hd._apply_group(st, "P1", 100, prompt_counts, 5940, 6000)
     return st
 
@@ -324,11 +324,11 @@ def test_verify_waits_when_non_inferiority_is_not_yet_resolvable(store):
     """A good fix with a ~1.7% observed rate cannot be shown non-inferior at n=413; that is 'wait', not 'fail'."""
     body = new_body()
     inc_id = incidents.open_incident(store, "w", "halluc", 4000, body)
-    st = _verify_state([413, 7, 380.0, 230])
+    st = _verify_state([413, 7, 230])
     inc = {"id": inc_id, "opened_minute": 4000, "body": body}
     hl._verify(ctx_for(store, FakeClient(), now=6000), "w", inc, st, "P1")
     assert body["tried"] == [] and store.conn.execute("select state from incidents").fetchone()[0] == "open"
-    st = _verify_state([1600, 24, 1480.0, 900])  # enough data: 1.5% vs 1.3% base is non-inferior at the 1pp margin
+    st = _verify_state([1600, 24, 900])  # enough data: 1.5% vs 1.3% base is non-inferior at the 1pp margin
     hl._verify(ctx_for(store, FakeClient(), now=6000), "w", inc, st, "P1")
     assert store.conn.execute("select state from incidents").fetchone()[0] == "closed"
 
@@ -343,3 +343,17 @@ def test_unvalidated_paid_suggestions_stay_pending_until_affordable(store):
     client.credits = 200.0
     hl._validate_suggestions(ctx_for(store, client), "w", body, "P2", 0.97)
     assert body["pending_suggestions"] == [] and len(body["candidates"]) == 2
+
+
+def test_persisted_four_element_counts_from_an_older_db_are_mapped_to_the_new_shape(store):
+    old = {"last_event": 0, "first_prompt": "P1", "base": [100, 4, 90.0, 50], "base_frozen": True,
+           "prompts": {"P1": {"total": [100, 4, 90.0, 50], "hours": {"7": [60, 3, 54.0, 30]}, "first_ts": 0, "last_ts": 9}},
+           "bad": {}, "day0": {}}
+    hd.save_state(store, hd.DETECTOR, "w", old)
+    st = hd.update(store, "w")  # no calls rows: the loader alone upgrades the shape
+    assert st["base"] == [100, 4, 50]
+    assert st["prompts"]["P1"]["total"] == [100, 4, 50]
+    assert st["prompts"]["P1"]["hours"]["7"] == [60, 3, 30]
+    assert hd.total_counts(st, "P1") == [100, 4, 50]
+    hd._apply_group(st, "P1", 8, [10, 1, 5], 10, 20)  # new-shape groups fold into upgraded counts
+    assert st["prompts"]["P1"]["total"] == [110, 5, 55]

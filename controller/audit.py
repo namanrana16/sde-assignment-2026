@@ -27,8 +27,9 @@ _NOISE = ("advance_intent", "did_eval", "halluc_eval", "did_curve_fit", "baselin
           "stopped", "plan_wait", "advance_recovered")
 _EVIDENCE = ("did_eval", "halluc_eval", "did_flagged", "incident_opened", "validation_run", "did_tested",
              "did_weak_base", "did_curve_fit")
-_LIFECYCLE_SKIP = ("proposal_draft", "proposal_intent", "proposal_monitoring", "proposal_closed",
-                   "proposal_apply_intent")
+# Per-version decision list: apply_intent is deliberately shown there (useful audit detail), unlike in timelines.
+_VERSION_DECISION_SKIP = ("proposal_draft", "proposal_intent", "proposal_monitoring", "proposal_closed")
+_LIFECYCLE_SKIP = _VERSION_DECISION_SKIP + ("proposal_apply_intent",)
 
 
 def parse_at(text: str) -> int:
@@ -164,8 +165,8 @@ def workflow_policy(store: Store, wid: str) -> dict | None:
             "objective": d.get("objective")}
 
 
-def _approval(p: dict, store: Store | None = None) -> dict | None:
-    """Approval facts. The sim exposes no approver names (A4): the approver is the workflow's policy approver."""
+def _approval(p: dict, store: Store) -> dict | None:
+    """Approval facts. The sim exposes no approver names (assumption A4): the approver is the workflow's policy approver."""
     if not p.get("approval_id"):
         return None
     decided = next((e for e in p["events"] if e["event"] in _DECISIONS), None)
@@ -176,7 +177,7 @@ def _approval(p: dict, store: Store | None = None) -> dict | None:
             "decision": decided["event"] if decided else None,
             "decided_minute": decided_min, "observed_minute": observed,
             "approver": f"policy approver of {p['proposal_id'].split(':')[0]}",
-            "policy": workflow_policy(store, p["proposal_id"].split(":")[0]) if store is not None else None}
+            "policy": workflow_policy(store, p["proposal_id"].split(":")[0])}
 
 
 def _evidence(store: Store, wid: str, upto: int, since: int) -> list[dict]:
@@ -214,10 +215,10 @@ def version_basis(store: Store, wid: str, version: int | None) -> dict | None:
     prop = _proposal(store, ver["proposal_id"])
     out: dict[str, Any] = {"version": ver, "proposal": prop, "config": _config_view(store, wid, version)}
     if prop:
+        ph = ",".join("?" * len(_VERSION_DECISION_SKIP))
         out["decisions"] = _decisions(
-            store, "workflow_id=? AND json_extract(inputs, '$.proposal_id')=? AND kind NOT IN"
-            " ('proposal_draft','proposal_intent','proposal_monitoring','proposal_closed') ORDER BY id",
-            (wid, prop["proposal_id"]))
+            store, f"workflow_id=? AND json_extract(inputs, '$.proposal_id')=? AND kind NOT IN ({ph}) ORDER BY id",
+            (wid, prop["proposal_id"], *_VERSION_DECISION_SKIP))
     else:
         out["decisions"] = _decisions(store, "workflow_id=? AND kind='config_observed' AND summary LIKE ?"
                                       " ORDER BY id", (wid, f"v{version} %"))
@@ -264,14 +265,9 @@ def _describe_next(store: Store, nxt: dict | None) -> dict | None:
             "proposal_state": prop["state"] if prop else None}
 
 
-def _in_range_filter() -> str:
-    ph = ",".join("?" * len(_NOISE + _LIFECYCLE_SKIP))
-    return f"kind NOT IN ({ph})"
-
-
 def why_range(store: Store, workflow: str, start: int, end: int) -> dict[str, Any]:
     skip = _NOISE + _LIFECYCLE_SKIP
-    decisions = _decisions(store, f"workflow_id=? AND sim_minute>=? AND sim_minute<? AND {_in_range_filter()}"
+    decisions = _decisions(store, f"workflow_id=? AND sim_minute>=? AND sim_minute<? AND kind NOT IN ({','.join('?' * len(skip))})"
                            " ORDER BY id", (workflow, start, end, *skip))
     alerts = _rows(store, "SELECT sim_minute, severity, code, message FROM alerts WHERE workflow_id=? AND"
                    " sim_minute>=? AND sim_minute<? ORDER BY id", (workflow, start, end))
@@ -282,11 +278,6 @@ def why_range(store: Store, workflow: str, start: int, end: int) -> dict[str, An
     events.sort(key=lambda e: (e["minute"] if e["minute"] is not None else -1))
     return {"mode": "range", "workflow": workflow, "from": fmt_minute(start), "to": fmt_minute(end),
             "events": events}
-
-
-def _prompt_of(store: Store, wid: str, minute: int) -> dict | None:
-    ver = _version_at(store, wid, minute)
-    return version_basis(store, wid, ver["version"]) if ver else None
 
 
 def why_lead(store: Store, lead_id: str, day: int | None = None) -> dict[str, Any]:

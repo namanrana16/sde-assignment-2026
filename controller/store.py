@@ -27,14 +27,6 @@ class Cursor:
     last_event_id: int
 
 
-@dataclass(frozen=True)
-class ConfigVersion:
-    workflow_id: str
-    version: int
-    actor: str | None
-    body: dict | None
-
-
 class Store:
     """Single-writer SQLite wrapper. Use ``transaction()`` for atomic groups."""
 
@@ -160,9 +152,6 @@ class Store:
             "SELECT body FROM config_versions WHERE workflow_id=? AND version=?",
             (workflow_id, version)).fetchone()
         return json.loads(row[0]) if row and row[0] else None
-
-    def has_config_body(self, workflow_id: str, version: int) -> bool:
-        return self.config_body(workflow_id, version) is not None
 
     # ---------------------------------------------------------------- jobs
     def get_job(self, name: str, workflow_id: str = "") -> int | None:

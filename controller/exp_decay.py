@@ -16,7 +16,6 @@ import math
 from typing import Sequence
 
 from . import cube, exp_data, exp_rules as er, exp_stats as es, settings
-from .cohorts import FeatureVocab
 from .exp_state import DAY
 
 Block = tuple[float, float, float, float]  # (connects, engaged, expected engaged, variance of engaged)
@@ -79,6 +78,8 @@ def cusum(blocks: Sequence[Block], reference: Block | None = None) -> dict:
 
     The reference is the winner's own level just BEFORE promotion when it has enough data (a decay that is already
     under way when the winner goes live would otherwise be baked into the reference), else its first blocks after.
+    The pre-promotion level is capped at EXP_CUSUM_REF_CAP_LIFT over the old control: the winner was selected on a high
+    reading inside that very window, so an uncapped reference reads a stable winner's regression to its true level as decay.
     """
     k_ref = 0 if reference else settings.EXP_CUSUM_REF_BLOCKS
     out = {"blocks": len(blocks), "alarm": False, "S": 0.0, "ref_ratio": None, "last_ratio": None,
@@ -90,6 +91,8 @@ def cusum(blocks: Sequence[Block], reference: Block | None = None) -> dict:
     e0 = ref[2]
     if e0 <= 0:  # a zero reference expectation has no ratio to track: no alarm
         return out
+    if reference:  # selected-window reference: the winner was picked on a lucky stretch of it (winner's curse)
+        ref = (ref[0], min(ref[1], e0 * (1.0 + settings.EXP_CUSUM_REF_CAP_LIFT)), ref[2], ref[3])
     se0 = math.sqrt(ref[3]) / e0
     r0 = ref[1] / e0
     s, first_alarm = 0.0, None
@@ -110,7 +113,11 @@ def holdout_view(store, wid: str, dim: str, winner: str, holdout: str, since: in
                  cells: Sequence[int] | None = None) -> dict:
     """Winner vs the concurrent holdout: recent-window point comparison and since-promotion significance."""
     data = exp_data.load_arms(store, wid, dim, since, now, cells)
-    w, h = data.get(winner, er.EMPTY), data.get(holdout, er.EMPTY)
+    return holdout_from(data.get(winner, er.EMPTY), data.get(holdout, er.EMPTY))
+
+
+def holdout_from(w: er.ArmData, h: er.ArmData) -> dict:
+    """The ``held`` dict ``decide`` reads, from the winner's and the holdout's data windows (also used by the Monte Carlo)."""
     since_c, recent_c = er.pair_contrast(w, h), er.pair_contrast(w, h, recent=True)
     out = {"holdout_connects": es.totals(h.engaged)[0], "recent_holdout_connects": es.totals(h.recent)[0],
            "recent_winner_connects": es.totals(w.recent)[0]}
@@ -128,7 +135,7 @@ def epoch_information() -> float:
         1 - settings.EXP_DECAY_DESIGN_LIFT) ** 2
 
 
-def sequential_alarm(c: es.Contrast | None, ts: Sequence[float], n_ctrl_min: float | None = None) -> dict:
+def sequential_alarm(c: es.Contrast | None, ts: Sequence[float]) -> dict:
     """One check of the sequential winner-vs-control test on data since the epoch started.
 
     ``ts`` are the information fractions of the looks taken so far in the epoch. A look is taken when the
@@ -139,8 +146,8 @@ def sequential_alarm(c: es.Contrast | None, ts: Sequence[float], n_ctrl_min: flo
         return out
     t = min(1.0, c.info / epoch_information())
     out.update(t=round(t, 4), z=round(c.z, 3))
-    next_planned = (ts[-1] if ts else 0.0) + 0.1
-    if t + 1e-9 < next_planned or c.n_c < (n_ctrl_min if n_ctrl_min is not None else settings.EXP_DECAY_MIN_CONNECTS):
+    next_planned = min(1.0, (ts[-1] if ts else 0.0) + 0.1)  # a look past 0.9 must still reach t = 1
+    if (ts and ts[-1] >= 1.0) or t + 1e-9 < next_planned or c.n_c < settings.EXP_DECAY_MIN_CONNECTS:
         return out
     seq = list(ts) + [t]
     b = es.obf_boundary(seq, settings.EXP_DECAY_ALPHA)

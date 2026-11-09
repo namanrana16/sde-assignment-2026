@@ -134,3 +134,25 @@ def test_look_after_the_full_information_look_has_no_alpha_left():
     assert es.obf_boundary([0.5, 1.0, 1.0], 0.05) == math.inf
     assert es.obf_boundary([0.5, 1.0, 1.4], 0.05) == math.inf
     assert math.isfinite(es.obf_boundary([0.5, 0.5], 0.05))  # same information: the earlier boundary stands
+
+
+# Values computed with the nested-closure implementation, before `_crossing_prob` was hoisted to module level.
+_OBF_SEQUENCES = ([0.25], [0.25, 0.5], [0.25, 0.5, 0.75, 1.0], [0.1, 0.2, 0.3], [0.3, 0.55, 0.8, 1.0],
+                  [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0], [0.5, 1.0])
+_OBF_EXPECTED = {
+    0.0025: (5.933958401986913, 4.118620236709994, 2.8287541846286715, 5.3967674139999176, 2.837039816800676,
+             2.879111055621287, 2.8079005181893493),
+    0.01: (5.020122469905908, 3.460467948844631, 2.3615411732491864, 4.55959768600848, 2.376514092612986,
+           2.422838379412589, 2.3299274194132877),
+    0.025: (4.332633646056199, 2.963159893498279, 2.016152583329152, 3.9298452566299105, 2.0272607743447892,
+            2.083481904270151, 1.9682535295960761),
+    0.05: (3.7495518372061167, 2.5398233755603528, 1.7215085496154572, 3.3961678135877875, 1.7420611464270976,
+           1.801533960958686, 1.6614947122377615),
+}
+
+
+@pytest.mark.parametrize("alpha", sorted(_OBF_EXPECTED))
+def test_obf_boundaries_are_bit_identical_to_the_pre_refactor_values(alpha):
+    got = tuple(es.obf_boundary(ts, alpha) for ts in _OBF_SEQUENCES)
+
+    assert got == _OBF_EXPECTED[alpha]

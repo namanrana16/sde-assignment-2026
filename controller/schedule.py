@@ -17,6 +17,7 @@ import logging
 from typing import Mapping
 
 from . import cube, schedule_model as sm, settings
+from .audit import fmt_minute
 from .cohorts import VOCAB_META_KEY, FeatureVocab, assign_cohort, select_partition
 from .desired import DEFAULT_REGISTRY, ROUTE_APPROVAL, ROUTE_AUTO, DesiredChange, PlanContext, Priority
 from .detectors.common import latest_config, load_state, once_alert, save_state
@@ -63,10 +64,6 @@ def _strata_cached(store, wid: str, day: int) -> list:
     store.conn.execute("INSERT OR REPLACE INTO exp_day_cache(workflow_id, day, col, cells, payload) VALUES (?,?,?,?,?)",
                        (wid, day, "strata", "-", json.dumps(rows)))
     return rows
-
-
-def clock(minute: int) -> str:
-    return f"Day {minute // DAY} {minute % DAY // 60:02d}:{minute % 60:02d}"
 
 
 def _guard(wf: Mapping, key: str) -> float:
@@ -197,7 +194,7 @@ def _detect_apply(ctx: PlanContext, wid: str, st: dict, cfg: tuple[int, dict]) -
     minute = _applied_minute(ctx.store, wid, cfg[0], ctx.now)
     st["applied"] = {"minute": minute, "version": cfg[0], "tables": live, "status": MONITORING,
                      "estimate": estimate, "prior_tables": _prior_tables(ctx.store, wid, cfg[0])}
-    ctx.store.add_decision(ctx.now, "schedule_applied", f"per-cohort call times live since {clock(minute)}"
+    ctx.store.add_decision(ctx.now, "schedule_applied", f"per-cohort call times live since {fmt_minute(minute)}"
                            f" (config v{cfg[0]}); verifying hour-mix-adjusted pickup", wid,
                            {"version": cfg[0], "estimate": estimate})
 
@@ -351,7 +348,9 @@ def schedule_producer(ctx: PlanContext, wid: str) -> list[DesiredChange]:
     evidence = {"rationale": _summary(plan, not cfg[1].get("cohorts")), "impact_override": _impact(plan),
                 "dry_run_extra": {"schedule_guardrail": {
                     "method": "recent dials re-weighted by the new tables (capacity per hour fixed, cohort shares "
-                              "proportional to volume x weight); engagement of connected leads re-composed",
+                              "proportional to volume x weight); engagement of connected leads re-composed; impact "
+                              f"score counts {int(settings.SCHEDULE_LIFT_HAIRCUT * 100)}% of this point lift "
+                              "(a replay has no CI)",
                     **plan["estimate"], "max_drop": plan["max_drop"], "blocked": plan["blocked"]}}}
     if not cfg[1].get("cohorts"):  # Day-0 bundle: cohorts + tables, always an approval
         patch = {"cohorts": plan["cohorts"], "hour_weights": plan["tables"]}
