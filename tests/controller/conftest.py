@@ -6,11 +6,19 @@ from fastapi.testclient import TestClient
 
 import sim.server
 from controller.client import SimClient
+from controller.ingest import reset_epoch_anchor
 from controller.store import Store
 from sim.scenario import load_scenario
 from sim.world import World
 
 ROOT = Path(__file__).resolve().parents[2]
+
+
+@pytest.fixture(autouse=True)
+def _reset_epoch_anchor():
+    """ingest keeps a module-global epoch offset; never let one test's anchor leak into the next."""
+    yield
+    reset_epoch_anchor()
 
 
 def build_world(tmp_path: Path, days: int = 2, history_days: int = 2) -> World:

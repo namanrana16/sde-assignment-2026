@@ -14,7 +14,7 @@ from dataclasses import dataclass, field
 
 from . import settings
 from .client import AdvanceNotApplied, Finished, SimClient
-from . import levers  # noqa: F401  (registers the Phase 3 detectors on the default registry)
+from . import levers  # noqa: F401  (registers the detectors, schedule and experiment producers on the default registry)
 from .credits import reconcile_ledger
 from .desired import DEFAULT_REGISTRY, Registry
 from .faults import crash_point
@@ -104,7 +104,6 @@ class Controller:
         self.windows = Windows(())
         self._workflow_ids: list[str] = []
         self._advance_returned = time.monotonic()
-        self._last_state: dict = {}
         self._saw_finished = False
         self._phases: dict[str, float] = {}
         self.observer = TickObserver(client, store)
@@ -149,15 +148,13 @@ class Controller:
         if phases is not None:
             phases["detect_s"], phases["plan_s"] = t2 - t, time.perf_counter() - t2
 
-    def run_person_analysis(self, now: int, phases: dict[str, float]) -> None:
+    def run_person_analysis(self, now: int) -> None:
         """Daily per-person call-time analysis (flag-gated, ANALYSIS ONLY): never proposes, never raises."""
-        t = time.perf_counter()
         try:
             person_analysis.maybe_run_daily(self.store, now)
         except Exception as exc:  # noqa: BLE001  (an analysis bug must not stop the loop)
             log.exception("person analysis failed")
             self.store.add_alert(now, "warn", "person_analysis_failed", f"{type(exc).__name__}: {exc}")
-        phases["person_s"] = time.perf_counter() - t
 
     def _guarded(self, step: str, now: int, fn, *args) -> None:
         """Run one tick step; a deterministic bug in it must not stop the sim advancing (the run would
@@ -184,7 +181,7 @@ class Controller:
         """Mid-run regression check (startup does it in ``open_world_store``)."""
         last_minute = self.store.get_meta("sim_minute")
         cursor = self.store.get_cursor().last_event_id
-        if (last_minute is not None and state["sim_minute"] < int(last_minute))                 or cursor > state["last_event_id"]:
+        if (last_minute is not None and state["sim_minute"] < int(last_minute)) or cursor > state["last_event_id"]:
             msg = (f"sim regressed mid-run: sim_minute {state['sim_minute']} < recorded {last_minute} or "
                    f"last_event_id {state['last_event_id']} < cursor {cursor}; exiting for a fresh world")
             self.store.add_alert(state["sim_minute"], "error", "world_regressed", msg)
@@ -193,7 +190,7 @@ class Controller:
     def tick(self) -> tuple[bool, IngestStats]:
         """One loop iteration. Returns ``(finished_and_drained, stats)``."""
         t0 = time.perf_counter()
-        state = self._last_state = self.client.state()
+        state = self.client.state()
         self._check_world(state)
         note_progress(self.store, state)
         assert self.gov is not None
@@ -212,7 +209,7 @@ class Controller:
             self._guarded("apply_approved", now, self.gov.apply_approved, now)
             ph["apply_s"] = time.perf_counter() - t
             self._guarded("plan_and_submit", now, self.plan_and_submit, now, ph)
-            self.run_person_analysis(now, ph)
+            self.run_person_analysis(now)
         self._phases = ph
         hit_stop = self.stop_at_minute is not None and state["sim_minute"] >= self.stop_at_minute
         step = 0
@@ -234,7 +231,6 @@ class Controller:
         if self._advance(state["sim_minute"], step):
             self.store.add_decision(state["sim_minute"], "finished",
                                     "advance reported finished; exiting 0")
-            self._last_state = {**state, "finished": True}
             self._saw_finished = True
             return True, stats + self.ingestor.sync()  # drain what the final advance produced
         return False, stats

@@ -8,6 +8,8 @@ Reads work on a read-only connection (``status`` and the web UI use one).
 from __future__ import annotations
 
 import json
+import logging
+import sqlite3
 from typing import Mapping
 
 from . import settings
@@ -15,6 +17,7 @@ from .audit import fmt_minute
 from .store import Store
 from .view_data import IN_FLIGHT, newest_call_minute, rows
 
+log = logging.getLogger(__name__)
 DAY = settings.MINUTES_PER_DAY
 _DDL = """CREATE TABLE IF NOT EXISTS metrics_ext (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -25,9 +28,6 @@ _DDL = """CREATE TABLE IF NOT EXISTS metrics_ext (
     newest_event_minute INTEGER,
     decisions_total INTEGER NOT NULL,
     c4xx INTEGER NOT NULL, c409 INTEGER NOT NULL, c403 INTEGER NOT NULL, c5xx INTEGER NOT NULL)"""
-_PHASES_DDL = """CREATE TABLE IF NOT EXISTS tick_phases (
-    id INTEGER PRIMARY KEY AUTOINCREMENT, sim_minute INTEGER NOT NULL, reconcile_s REAL, ingest_s REAL,
-    apply_s REAL, detect_s REAL, plan_s REAL)"""
 COUNTER_KEYS = ("4xx", "409", "403", "5xx")
 
 
@@ -38,12 +38,11 @@ def ensure(store: Store) -> None:
 def record_phases(store: Store, minute: int, ph: Mapping[str, float]) -> None:
     """Per-phase wall time of a tick (load analysis); best effort, never breaks the loop."""
     try:
-        store.conn.execute(_PHASES_DDL)
         store.conn.execute(
             "INSERT INTO tick_phases(sim_minute, reconcile_s, ingest_s, apply_s, detect_s, plan_s) VALUES (?,?,?,?,?,?)",
             (minute, *(ph.get(k) for k in ("reconcile_s", "ingest_s", "apply_s", "detect_s", "plan_s"))))
-    except Exception:  # noqa: BLE001
-        pass
+    except sqlite3.Error:
+        log.debug("could not record tick_phases", exc_info=True)
 
 
 def add_counters(store: Store, delta: Mapping[str, int]) -> dict[str, int]:

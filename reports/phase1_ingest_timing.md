@@ -29,5 +29,5 @@ the sim's start-up, not the controller's.
   (~1.4k events/s). Raising `wal_autocheckpoint` to 20,000 pages and `cache_size` to 200 MB gave
   about 16x faster commits (0.6 s per 13.5k-event tick). Both are in `controller/settings.py`.
 * Peak memory is the number to attack first if the box is 8 GB and the load grows 10x: stream
-  chunks instead of materialising them (`first_line`/`iter_chunk_lines` are already separate calls).
+  chunks instead of materialising them (chunks are downloaded whole today; streaming is the proposed 10x fix).
 * Timing is noisy: I ran the unit tests concurrently for about 25 s during the measured run.

@@ -5,10 +5,10 @@ Nothing here is derived from simulator ground truth. Values that are priors
 """
 from __future__ import annotations
 
-# --- Feature flags: every lever stays OFF until its phase is green -----------
-ENABLE_DID = True  # Phase 3 green
-ENABLE_HALLUC = True  # Phase 3 green
-ENABLE_SCHEDULE = True  # Phase 5 green
+# --- Feature flags: kill switches (all default on except the analysis-only person view) ---
+ENABLE_DID = True
+ENABLE_HALLUC = True
+ENABLE_SCHEDULE = True
 ENABLE_EXPERIMENTS = True
 ENABLE_PERSON_ANALYSIS = False
 
@@ -35,6 +35,8 @@ INGEST_SUBBATCH_LINES = 50_000  # parse/flush granularity inside one chunk trans
 SQLITE_BUSY_TIMEOUT_MS = 30_000
 WAL_AUTOCHECKPOINT_PAGES = 20_000  # rarer checkpoints: each one fsyncs the whole DB
 SQLITE_CACHE_KB = 200_000
+# Pages of WAL allowed before an automatic checkpoint during history ingest (about 1 GB at 4 KiB pages).
+HISTORY_WAL_AUTOCHECKPOINT_PAGES = 250_000
 
 # --- Loop --------------------------------------------------------------------
 STARTUP_WAIT_S = 300.0
@@ -116,7 +118,6 @@ DID_REBALANCE_MIN_HEALTH_GAIN = 0.0  # ... and the rebalance's expected DID-heal
 DID_STEP_SAFETY = 0.95  # use at most this fraction of max_shift per auto-apply step
 DID_MIN_TV = 0.005  # smaller allocation moves are not worth an auto-apply
 DID_MIN_TV_APPROVAL = 0.03  # ... nor an approval request (one of the scarce daily slots)
-DID_EVAL_MIN_DIALS_ACTIVE = 1  # evaluate only when the window has dials
 
 # --- C8 hallucination incidents ---------------------------------------------------------
 HALLUC_VALIDATION_N = 300
@@ -131,7 +132,6 @@ INCIDENT_CREDIT_DAILY_CAP = 30.0  # per workflow per sim day, all incident-mode 
 HALLUC_P = 1e-4
 HALLUC_P_DRIFT = 1e-5
 HALLUC_MIN_CONNECTS = 200
-HALLUC_ADHERENCE_DROP = 0.02
 HALLUC_WINDOW_MINUTES = 1440  # rolling window for drift
 HALLUC_VERIFY_MIN_CONNECTS = 400  # non-inferiority needs n: se(0.6%, n=400) ~ 0.4% << margin
 HALLUC_VERIFY_MAX_CONNECTS = 1500  # non-inferiority at a 1pp margin needs ~1000 connects when the base rate is ~2%; past this the fix fails
@@ -158,7 +158,7 @@ SIBLING_N = 200  # modest validation size: 2 credits each
 SIBLING_TOPUP_N = 300  # one top-up (3 credits) for a sibling that looks clearly better but is not yet separated
 SIBLING_BOUND_Z = 1.645  # one-sided 95% Wilson bounds: sibling upper bound must lie below the live prompt's lower bound
 
-# --- Phase 5: shared cohorts (C2) and per-cohort call time (C4a) (docs/THRESHOLDS.md) ----
+# --- Shared cohorts (C2) and per-cohort call time (C4a) (docs/THRESHOLDS.md) ----
 COHORT_MIN_DIALS_PER_HOUR = 100  # n_min per cohort = this x in-window hours: se_rel(100) = 15% per (cohort, hour) rate
 COHORT_MAX = 20  # the sim's limit
 COHORT_MIN_Z = 3.72  # a partition must beat the pooled hour profile at one-sided p<1e-4 (= 1e-3 / 10 candidate partitions)
@@ -176,7 +176,7 @@ SCHEDULE_MIN_HISTORY_DAYS_COLD = 1  # cold start: build cohorts from this many f
 SIBLING_MIN_LIVE_FRACTION = 0.5  # the live prompt's failure lower bound must be >= half the workflow's tolerance (1 - min pass)
 
 
-# --- Phase 6: welcome x voice experiments and decay (C6/C7; derivations in docs/THRESHOLDS.md) ----------------
+# --- Welcome x voice experiments and decay (C6/C7; derivations in docs/THRESHOLDS.md) ----------------
 EXP_ENTRY_SHARE = 0.075  # CONTEXT C6: each challenger enters at 7.5% ...
 EXP_MAX_CHALLENGER_TOTAL = 0.225  # ... and a dim's challengers total at most 22.5% at entry
 EXP_RAMP_SHARE = 0.20  # a challenger whose point estimate is >= control ramps to 20%
@@ -236,13 +236,13 @@ PERSON_PRIOR_STRENGTH = 20.0  # PRIOR (documented in docs/THRESHOLDS.md): pseudo
 PERSON_PASS_PROB = 0.8  # would-assign only if P(best block pickup > cohort average) >= this
 PERSON_MAX_ROWS_PER_WORKFLOW = 50_000  # cap on persisted per-person rows (bounded table)
 
-# --- floor fixes C ---
+# --- Experiment apply-time drop veto ---
 EXP_DROP_VETO_RECOVERED_Z = -1.0  # apply-time: a ramped arm's drop is vetoed only if its last-24h z recovered above this
 EXP_DROP_VETO_Z_MARGIN = 0.5  # apply-time: ... or its cumulative z is above the drop bound by this margin
 
-# --- floor fixes D ---
+# --- Incident resend and veto-hook crash limits ---
 SUBMIT_FAILED_BACKOFF_URGENT_MIN = 30  # incident approval-route resend delay after a failed send (fixed, no doubling)
 VETO_CRASH_MAX_RETRIES = 3  # a crashing apply-time veto hook keeps an approval alive this many ticks before it is withheld
 
-# --- review 3 ---
+# --- Re-filing after rejection ---
 REFILE_AFTER_REJECT_MIN = 120  # after the 2nd+ rejection of one (workflow, kind) in 24 h: wait this x (rejections - 1)

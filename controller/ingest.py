@@ -40,9 +40,6 @@ from .store import Store
 log = logging.getLogger(__name__)
 _EPOCH_ORD = date.fromisoformat(settings.EPOCH_DATE).toordinal()
 _MAX_MISMATCH_ALERTS = 5
-# Pages of WAL allowed before an automatic checkpoint during history ingest (about 1 GB at 4 KiB pages).
-# Module constant here because settings.py is owned elsewhere; the PM may move it.
-HISTORY_WAL_AUTOCHECKPOINT_PAGES = 250_000
 _CONFIG_CHANGED_LINE = re.compile(r'^.*"config_changed".*$', re.MULTILINE)
 
 _CALL_SQL = ("INSERT OR IGNORE INTO calls(event_id, workflow_id, ts_minute, day, hour, lid,"
@@ -157,7 +154,7 @@ class Ingestor:
         """History chunks without the calls_lead index and with a large WAL; then build the index."""
         total = IngestStats()
         pending = self.client.list_chunks("history", self.store.get_cursor().last_chunk)
-        self.store.set_wal_autocheckpoint(HISTORY_WAL_AUTOCHECKPOINT_PAGES)
+        self.store.set_wal_autocheckpoint(settings.HISTORY_WAL_AUTOCHECKPOINT_PAGES)
         try:
             for meta in sorted(pending, key=lambda m: m["chunk"]):
                 total += self.process_chunk(meta)

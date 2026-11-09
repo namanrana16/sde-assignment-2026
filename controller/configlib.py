@@ -22,12 +22,12 @@ import copy
 import math
 from typing import Any, Mapping
 
+from . import settings
 from .cohorts import FEATURES, FeatureVocab
 
 AGENT_DIMS = ("welcome_message", "voice", "caller_id")
 CHANGE_DIMS = ("cohorts", *AGENT_DIMS, "prompt_version", "schedule")
-MAX_COHORTS = 20
-_EPS = 1e-9
+MAX_COHORTS = settings.COHORT_MAX
 DIST_TOLERANCE = 1e-9  # allocations are compared on normalised values with this tolerance
 
 

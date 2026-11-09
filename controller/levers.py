@@ -1,4 +1,4 @@
-"""Registers the Phase 3 detectors/producers on the default registry (each behind its own flag)."""
+"""Registers the detectors, schedule and experiment producers on the default registry (each behind its own flag)."""
 from __future__ import annotations
 
 from . import baselines, experiments, schedule, settings
